@@ -5,7 +5,8 @@
 
 const GW = 1024;
 const GH = 576;
-const VERSION = '1.2';
+const VERSION = '1.3';
+const SUN_HIT_RADIUS = 56; // generous for small fingers on touch screens
 const MAX_PLAYS_PER_DAY = 5;
 const PLAY_STORAGE_KEY  = 'phaserlab_daily_plays'; // shared with PhaserLab (same origin)
 
@@ -271,7 +272,54 @@ class GameScene extends Phaser.Scene {
     this.time.addEvent({ delay: ZOMBIE_SPAWN_MS, callback: () => this.trySpawnZombie(), loop: true });
     this.time.delayedCall(3000, () => this.trySpawnZombie());
 
-    this.input.on('pointerdown', (p) => this.onTap(p.x, p.y));
+    this.input.on('pointerdown', (pointer, currentlyOver) => this.handleTap(pointer, currentlyOver));
+  }
+
+  handleTap(pointer, currentlyOver) {
+    if (this.isOver) return;
+
+    // Priority 1: Phaser hit-test on interactive suns (large hit circle)
+    for (const go of currentlyOver) {
+      if (go.getData('isSun')) {
+        this.collectSun(go);
+        return;
+      }
+    }
+
+    const x = pointer.worldX;
+    const y = pointer.worldY;
+
+    // Priority 2: distance fallback (covers edge taps Phaser may miss)
+    if (this.tapHitsSun(x, y)) return;
+
+    this.onTap(x, y);
+  }
+
+  tapHitsSun(x, y, cell) {
+    const points = [{ x, y }];
+    if (cell) {
+      const c = cellCenter(cell.col, cell.row);
+      points.push(c);
+    }
+    let closest = null;
+    let best = SUN_HIT_RADIUS;
+    for (const s of this.suns.getChildren()) {
+      if (!s.active || s.getData('collected')) continue;
+      for (const p of points) {
+        const d = Phaser.Math.Distance.Between(p.x, p.y, s.x, s.y);
+        if (d < best) { closest = s; best = d; }
+      }
+    }
+    if (closest) { this.collectSun(closest); return true; }
+    return false;
+  }
+
+  setupSunHitArea(sun) {
+    sun.setData('isSun', true);
+    sun.setInteractive(
+      new Phaser.Geom.Circle(0, 0, SUN_HIT_RADIUS),
+      Phaser.Geom.Circle.Contains
+    );
   }
 
   buildHUD() {
@@ -330,6 +378,7 @@ class GameScene extends Phaser.Scene {
     const x = Phaser.Math.Between(LAWN_X + 40, LAWN_X + LAWN_W - 40);
     const sun = this.add.image(x, -30, 'sun').setScale(0.9);
     this.suns.add(sun);
+    this.setupSunHitArea(sun);
     this.tweens.add({
       targets: sun, y: Phaser.Math.Between(LAWN_Y + 40, LAWN_Y + LAWN_H - 40),
       duration: 4500, ease: 'Sine.inOut',
@@ -338,7 +387,10 @@ class GameScene extends Phaser.Scene {
   }
 
   collectSun(sun) {
-    if (!sun.active || this.isOver) return false;
+    if (!sun.active || this.isOver || sun.getData('collected')) return false;
+    sun.setData('collected', true);
+    sun.disableInteractive();
+    this.tweens.killTweensOf(sun);
     this.sunCount += SUN_VALUE;
     this.refreshSun();
     SFX.sun();
@@ -386,16 +438,9 @@ class GameScene extends Phaser.Scene {
     if (this.isOver) return;
     if (y >= GH - PICKER_H) return;
 
-    // Sun takes priority — never plant through a sun tap
-    for (const s of this.suns.getChildren()) {
-      if (!s.active) continue;
-      if (Phaser.Math.Distance.Between(x, y, s.x, s.y) < 44) {
-        if (this.collectSun(s)) return;
-      }
-    }
-
     const cell = gridFromPointer(x, y);
     if (!cell) return;
+    if (this.tapHitsSun(x, y, cell)) return;
     if (this.grid[cell.row][cell.col]) return;
     if (this.selectedPlant === 'flower' && this.sunCount >= FLOWER_COST) {
       this.placeFlower(cell.col, cell.row);
