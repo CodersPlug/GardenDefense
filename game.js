@@ -5,7 +5,7 @@
 
 const GW = 1024;
 const GH = 576;
-const VERSION = '1.0';
+const VERSION = '1.1';
 
 const HUD_Y = 36;
 const PICKER_H = 110;
@@ -276,18 +276,17 @@ class GameScene extends Phaser.Scene {
   dropSun() {
     if (this.isOver) return;
     const x = Phaser.Math.Between(LAWN_X + 40, LAWN_X + LAWN_W - 40);
-    const sun = this.add.image(x, -30, 'sun').setScale(0.9).setInteractive();
+    const sun = this.add.image(x, -30, 'sun').setScale(0.9);
     this.suns.add(sun);
     this.tweens.add({
       targets: sun, y: Phaser.Math.Between(LAWN_Y + 40, LAWN_Y + LAWN_H - 40),
       duration: 4500, ease: 'Sine.inOut',
     });
     this.tweens.add({ targets: sun, scale: 1.05, duration: 500, yoyo: true, repeat: -1 });
-    sun.on('pointerdown', () => this.collectSun(sun));
   }
 
   collectSun(sun) {
-    if (!sun.active || this.isOver) return;
+    if (!sun.active || this.isOver) return false;
     this.sunCount += SUN_VALUE;
     this.refreshSun();
     SFX.sun();
@@ -295,6 +294,7 @@ class GameScene extends Phaser.Scene {
       targets: sun, scale: 1.6, alpha: 0, duration: 200,
       onComplete: () => { sun.destroy(); },
     });
+    return true;
   }
 
   trySpawnZombie() {
@@ -332,13 +332,15 @@ class GameScene extends Phaser.Scene {
 
   onTap(x, y) {
     if (this.isOver) return;
+    if (y >= GH - PICKER_H) return;
 
-    // Sun tap (also handled by sun pointerdown — fallback here)
-    this.suns.getChildren().forEach(s => {
-      if (!s.active) return;
-      const d = Phaser.Math.Distance.Between(x, y, s.x, s.y);
-      if (d < 36) this.collectSun(s);
-    });
+    // Sun takes priority — never plant through a sun tap
+    for (const s of this.suns.getChildren()) {
+      if (!s.active) continue;
+      if (Phaser.Math.Distance.Between(x, y, s.x, s.y) < 44) {
+        if (this.collectSun(s)) return;
+      }
+    }
 
     const cell = gridFromPointer(x, y);
     if (!cell) return;
