@@ -5,7 +5,9 @@
 
 const GW = 1024;
 const GH = 576;
-const VERSION = '1.1';
+const VERSION = '1.2';
+const MAX_PLAYS_PER_DAY = 5;
+const PLAY_STORAGE_KEY  = 'phaserlab_daily_plays'; // shared with PhaserLab (same origin)
 
 const HUD_Y = 36;
 const PICKER_H = 110;
@@ -83,6 +85,41 @@ const SFX = (() => {
     },
   };
 })();
+
+// ── Daily play limit (shared with PhaserLab via localStorage) ───
+const DailyPlays = {
+  today() { return new Date().toISOString().slice(0, 10); },
+  get() {
+    try {
+      const raw = localStorage.getItem(PLAY_STORAGE_KEY);
+      if (!raw) return { date: this.today(), count: 0 };
+      const data = JSON.parse(raw);
+      if (data.date !== this.today()) return { date: this.today(), count: 0 };
+      return data;
+    } catch (_) {
+      return { date: this.today(), count: 0 };
+    }
+  },
+  remaining() { return Math.max(0, MAX_PLAYS_PER_DAY - this.get().count); },
+  canPlay()   { return this.remaining() > 0; },
+  record() {
+    const data = this.get();
+    data.count++;
+    localStorage.setItem(PLAY_STORAGE_KEY, JSON.stringify({ date: this.today(), count: data.count }));
+  },
+  reset() { localStorage.removeItem(PLAY_STORAGE_KEY); },
+};
+
+function tryStartGame(fromScene, stopScenes = []) {
+  if (!DailyPlays.canPlay()) {
+    stopScenes.forEach(k => fromScene.scene.stop(k));
+    fromScene.scene.start('DailyLimitScene');
+    return;
+  }
+  DailyPlays.record();
+  stopScenes.forEach(k => fromScene.scene.stop(k));
+  fromScene.scene.start('GameScene');
+}
 
 function makeTextures(scene) {
   const g = scene.make.graphics({ x: 0, y: 0, add: false });
@@ -162,17 +199,32 @@ class MenuScene extends Phaser.Scene {
       color: '#ff4da6', stroke: '#ffffff', strokeThickness: 6,
     }).setOrigin(0.5);
 
-    const play = this.add.circle(GW / 2, GH / 2 + 80, 64, 0xff6eb4)
+    const rem = DailyPlays.remaining();
+    const startX = GW / 2 - (MAX_PLAYS_PER_DAY - 1) * 22;
+    for (let i = 0; i < MAX_PLAYS_PER_DAY; i++) {
+      this.add.text(startX + i * 44, GH / 2 + 20, i < rem ? '\u2B50' : '\u2606', {
+        fontSize: '28px', color: i < rem ? '#ffd23f' : '#ffffff44',
+      }).setOrigin(0.5);
+    }
+
+    const play = this.add.circle(GW / 2, GH / 2 + 90, 64, 0xff6eb4)
       .setInteractive({ useHandCursor: true });
-    this.add.text(GW / 2, GH / 2 + 80, '\u25B6', {
+    this.add.text(GW / 2, GH / 2 + 90, '\u25B6', {
       fontSize: '48px', color: '#ffffff',
     }).setOrigin(0.5);
     this.tweens.add({ targets: play, scale: 1.08, duration: 600, yoyo: true, repeat: -1 });
-    play.on('pointerdown', () => this.scene.start('GameScene'));
+    play.on('pointerdown', () => tryStartGame(this));
 
-    this.add.text(8, GH - 6, 'v' + VERSION, {
+    const versionLabel = this.add.text(8, GH - 6, 'v' + VERSION, {
       fontSize: '13px', fontFamily: 'monospace', color: '#ffffff88',
-    }).setOrigin(0, 1);
+    }).setOrigin(0, 1).setInteractive();
+    let holdEvt = null;
+    versionLabel.on('pointerdown', () => {
+      holdEvt = this.time.delayedCall(3000, () => { DailyPlays.reset(); this.scene.restart(); });
+    });
+    const cancelHold = () => { if (holdEvt) { holdEvt.remove(); holdEvt = null; } };
+    versionLabel.on('pointerup', cancelHold);
+    versionLabel.on('pointerout', cancelHold);
   }
 }
 
@@ -468,11 +520,38 @@ class EndScene extends Phaser.Scene {
     const again = this.add.circle(GW / 2, GH / 2 + 90, 58, win ? 0xff6eb4 : 0x9b8ec4)
       .setInteractive({ useHandCursor: true });
     this.add.text(GW / 2, GH / 2 + 90, '\u25B6', { fontSize: '44px', color: '#fff' }).setOrigin(0.5);
-    again.on('pointerdown', () => this.scene.start('GameScene'));
+    again.on('pointerdown', () => tryStartGame(this, ['EndScene', 'GameScene']));
 
     const home = this.add.circle(GW / 2, GH / 2 + 190, 44, 0x6ecf8a)
       .setInteractive({ useHandCursor: true });
     this.add.text(GW / 2, GH / 2 + 190, '\u2B50', { fontSize: '32px' }).setOrigin(0.5);
+    home.on('pointerdown', () => this.scene.start('MenuScene'));
+  }
+}
+
+// ── Daily limit screen ─────────────────────────────────────────
+class DailyLimitScene extends Phaser.Scene {
+  constructor() { super('DailyLimitScene'); }
+
+  create() {
+    this.add.rectangle(GW / 2, GH / 2, GW, GH, 0x1a2a4a);
+
+    for (let i = 0; i < 8; i++) {
+      this.add.text(Phaser.Math.Between(60, GW - 60), Phaser.Math.Between(40, 200), '\u2728', {
+        fontSize: Phaser.Math.Between(18, 28) + 'px', color: '#ffffff55',
+      }).setOrigin(0.5);
+    }
+
+    this.add.text(GW / 2, GH / 2 - 100, '\uD83C\uDF19', { fontSize: '96px' }).setOrigin(0.5);
+    this.add.text(GW / 2, GH / 2 + 10, '\u00A1Hasta ma\u00F1ana!', {
+      fontSize: '44px', fontFamily: 'Arial Black, sans-serif',
+      color: '#c8d8ff', stroke: '#0a1530', strokeThickness: 6,
+    }).setOrigin(0.5);
+    this.add.text(GW / 2, GH / 2 + 80, '\uD83D\uDE34', { fontSize: '48px' }).setOrigin(0.5);
+
+    const home = this.add.circle(GW / 2, GH / 2 + 170, 52, 0x44c767)
+      .setInteractive({ useHandCursor: true });
+    this.add.text(GW / 2, GH / 2 + 170, '\u2B50', { fontSize: '40px' }).setOrigin(0.5);
     home.on('pointerdown', () => this.scene.start('MenuScene'));
   }
 }
@@ -489,5 +568,5 @@ new Phaser.Game({
     height: GH,
   },
   physics: { default: 'arcade', arcade: { debug: false } },
-  scene: [MenuScene, GameScene, EndScene],
+  scene: [MenuScene, GameScene, EndScene, DailyLimitScene],
 });
