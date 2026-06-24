@@ -5,7 +5,7 @@
 
 const GW = 1024;
 const GH = 576;
-const VERSION = '1.5';
+const VERSION = '1.6';
 const GAME_ID = 'gardenDefense';
 const SUN_HIT_RADIUS = 56; // generous for small fingers on touch screens
 const MAX_PLAYS_PER_DAY = 5;
@@ -690,7 +690,8 @@ class DailyLimitScene extends Phaser.Scene {
       }).setOrigin(0.5);
     }
 
-    this.add.text(GW / 2, GH / 2 - 100, '\uD83C\uDF19', { fontSize: '96px' }).setOrigin(0.5);
+    const moon = this.add.text(GW / 2, GH / 2 - 100, '\uD83C\uDF19', { fontSize: '96px' })
+      .setOrigin(0.5).setInteractive();
     this.add.text(GW / 2, GH / 2 + 10, '\u00A1Hasta ma\u00F1ana!', {
       fontSize: '44px', fontFamily: 'Arial Black, sans-serif',
       color: '#c8d8ff', stroke: '#0a1530', strokeThickness: 6,
@@ -701,6 +702,19 @@ class DailyLimitScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true });
     this.add.text(GW / 2, GH / 2 + 170, '\u2B50', { fontSize: '40px' }).setOrigin(0.5);
     home.on('pointerdown', () => this.scene.start('MenuScene'));
+
+    this.add.text(8, GH - 6, 'v' + VERSION, {
+      fontSize: '13px', fontFamily: 'monospace', color: '#ffffff44',
+    }).setOrigin(0, 1);
+
+    // Parent reset: hold the moon 3 s
+    let holdEvt = null;
+    moon.on('pointerdown', () => {
+      holdEvt = this.time.delayedCall(3000, () => { DailyPlays.reset(); this.scene.start('MenuScene'); });
+    });
+    const cancelHold = () => { if (holdEvt) { holdEvt.remove(); holdEvt = null; } };
+    moon.on('pointerup', cancelHold);
+    moon.on('pointerout', cancelHold);
   }
 }
 
