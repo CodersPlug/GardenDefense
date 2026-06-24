@@ -5,7 +5,8 @@
 
 const GW = 1024;
 const GH = 576;
-const VERSION = '1.4';
+const VERSION = '1.5';
+const GAME_ID = 'gardenDefense';
 const SUN_HIT_RADIUS = 56; // generous for small fingers on touch screens
 const MAX_PLAYS_PER_DAY = 5;
 const PLAY_STORAGE_KEY  = 'phaserlab_daily_plays'; // shared with PhaserLab (same origin)
@@ -93,23 +94,42 @@ const SFX = (() => {
 // ── Daily play limit (shared with PhaserLab via localStorage) ───
 const DailyPlays = {
   today() { return new Date().toISOString().slice(0, 10); },
-  get() {
+  load() {
+    const empty = { date: this.today(), count: 0, versions: {} };
     try {
       const raw = localStorage.getItem(PLAY_STORAGE_KEY);
-      if (!raw) return { date: this.today(), count: 0 };
+      if (!raw) return empty;
       const data = JSON.parse(raw);
-      if (data.date !== this.today()) return { date: this.today(), count: 0 };
+      if (!data.versions) data.versions = {};
+      let dirty = false;
+      if (data.date !== this.today()) {
+        data.date = this.today();
+        data.count = 0;
+        dirty = true;
+      }
+      if (data.versions[GAME_ID] !== VERSION) {
+        data.count = 0;
+        data.versions[GAME_ID] = VERSION;
+        dirty = true;
+      }
+      if (dirty) this.persist(data);
       return data;
     } catch (_) {
-      return { date: this.today(), count: 0 };
+      return empty;
     }
   },
-  remaining() { return Math.max(0, MAX_PLAYS_PER_DAY - this.get().count); },
+  persist(data) {
+    if (!data.versions) data.versions = {};
+    data.versions[GAME_ID] = VERSION;
+    localStorage.setItem(PLAY_STORAGE_KEY, JSON.stringify(data));
+  },
+  get() { return this.load(); },
+  remaining() { return Math.max(0, MAX_PLAYS_PER_DAY - this.load().count); },
   canPlay()   { return this.remaining() > 0; },
   record() {
-    const data = this.get();
+    const data = this.load();
     data.count++;
-    localStorage.setItem(PLAY_STORAGE_KEY, JSON.stringify({ date: this.today(), count: data.count }));
+    this.persist(data);
   },
   reset() { localStorage.removeItem(PLAY_STORAGE_KEY); },
 };
@@ -284,6 +304,7 @@ class GameScene extends Phaser.Scene {
     this.spawnedThisWave = 0;
     this.zombiesAlive = 0;
     this.isOver = false;
+    this.isPaused = false;
     this.selectedPlant = 'sunflower';
     this.grid = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
 
@@ -304,7 +325,7 @@ class GameScene extends Phaser.Scene {
   }
 
   handleTap(pointer, currentlyOver) {
-    if (this.isOver) return;
+    if (this.isOver || this.isPaused) return;
 
     // Priority 1: Phaser hit-test on interactive suns (large hit circle)
     for (const go of currentlyOver) {
@@ -367,11 +388,18 @@ class GameScene extends Phaser.Scene {
 
     this.waveIcons = [];
     for (let i = 0; i < WAVES.length; i++) {
-      const w = this.add.text(GW - 130 + i * 36, HUD_Y, '\uD83C\uDF0A', {
+      const w = this.add.text(GW - 180 + i * 36, HUD_Y, '\uD83C\uDF0A', {
         fontSize: '28px', alpha: i === 0 ? 1 : 0.25,
       }).setOrigin(0.5);
       this.waveIcons.push(w);
     }
+
+    this.pauseBtn = this.add.circle(GW - 44, HUD_Y, 30, 0x000000, 0.45)
+      .setInteractive({ useHandCursor: true });
+    this.pauseIcon = this.add.text(GW - 44, HUD_Y, '\u23F8', {
+      fontSize: '30px', color: '#ffffff',
+    }).setOrigin(0.5);
+    this.pauseBtn.on('pointerdown', () => this.togglePause());
 
     this.add.text(8, GH - PICKER_H - 6, 'v' + VERSION, {
       fontSize: '13px', fontFamily: 'monospace', color: '#ffffff88',
@@ -572,8 +600,24 @@ class GameScene extends Phaser.Scene {
     this.scene.start('EndScene', { win });
   }
 
-  update(time) {
+  togglePause() {
     if (this.isOver) return;
+    this.isPaused = !this.isPaused;
+    if (this.isPaused) {
+      this.time.timeScale = 0;
+      this.tweens.pauseAll();
+      this.physics.pause();
+      this.pauseIcon.setText('\u25B6');
+    } else {
+      this.time.timeScale = 1;
+      this.tweens.resumeAll();
+      this.physics.resume();
+      this.pauseIcon.setText('\u23F8');
+    }
+  }
+
+  update(time) {
+    if (this.isOver || this.isPaused) return;
 
     this.plants.getChildren().forEach(plant => {
       if (!plant.active) return;
