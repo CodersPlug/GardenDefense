@@ -372,6 +372,10 @@ class GameScene extends Phaser.Scene {
       }).setOrigin(0.5);
       this.waveIcons.push(w);
     }
+
+    this.add.text(8, GH - PICKER_H - 6, 'v' + VERSION, {
+      fontSize: '13px', fontFamily: 'monospace', color: '#ffffff88',
+    }).setOrigin(0, 1);
   }
 
   buildPicker() {
