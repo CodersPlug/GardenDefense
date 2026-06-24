@@ -5,7 +5,7 @@
 
 const GW = 1024;
 const GH = 576;
-const VERSION = '1.6';
+const VERSION = '1.7';
 const GAME_ID = 'gardenDefense';
 const SUN_HIT_RADIUS = 56; // generous for small fingers on touch screens
 const MAX_PLAYS_PER_DAY = 5;
