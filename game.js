@@ -5,7 +5,7 @@
 
 const GW = 1024;
 const GH = 576;
-const VERSION = '1.7';
+const VERSION = '1.8';
 const GAME_ID = 'gardenDefense';
 const SUN_HIT_RADIUS = 56; // generous for small fingers on touch screens
 const MAX_PLAYS_PER_DAY = 5;
@@ -37,10 +37,13 @@ const ZOMBIE_SPEED = 28;
 const ZOMBIE_SPAWN_MS = 4200;
 const MAX_HEARTS = 5;
 
+const BOSS_HP = 12;
+const BOSS_SPEED = 16;
+
 const WAVES = [
   { count: 4, label: 1 },
   { count: 6, label: 2 },
-  { count: 8, label: 3 },
+  { count: 3, label: 3, boss: true },
 ];
 
 const C = {
@@ -207,6 +210,34 @@ function makeTextures(scene) {
   g.fillStyle(0xffffff); g.fillTriangle(20, 26, 19, 31, 21, 31); g.fillTriangle(28, 26, 27, 31, 29, 31);
   g.fillStyle(0xfff5e0); g.fillTriangle(11, 13, 8, 4, 13, 10); g.fillTriangle(37, 13, 35, 10, 40, 4);
   g.generateTexture('bowserjr', 48, 58);
+
+  // Big Bowser boss — dark green, angry, visually distinct
+  g.clear();
+  g.fillStyle(0x1a6e35); g.fillEllipse(48, 80, 48, 52); // body
+  g.fillCircle(48, 38, 36);                               // head
+  g.fillStyle(0x7a3e00);                                  // shell back
+  g.fillRect(22, 56, 52, 36);
+  g.fillStyle(0xff5500);                                  // tall bold spikes
+  g.fillTriangle(48, 0, 28, 26, 68, 26);                 // center spike
+  g.fillTriangle(28, 8, 12, 28, 38, 26);                 // left spike
+  g.fillTriangle(68, 8, 58, 26, 84, 28);                 // right spike
+  g.fillStyle(0xffcc44); g.fillEllipse(48, 50, 30, 22);  // snout
+  g.fillStyle(0xffffff);
+  g.fillCircle(32, 32, 12); g.fillCircle(64, 32, 12);    // eyes white
+  g.fillStyle(0xff2200);
+  g.fillCircle(32, 34, 7); g.fillCircle(64, 34, 7);      // red pupils (angry)
+  g.fillStyle(0x111111);
+  g.fillCircle(33, 35, 3.5); g.fillCircle(65, 35, 3.5); // pupils
+  g.fillStyle(0x111111);                                  // angry eyebrows
+  g.fillTriangle(22, 22, 32, 30, 44, 22);
+  g.fillTriangle(52, 22, 64, 30, 74, 22);
+  g.fillStyle(0xffffff);                                  // teeth
+  g.fillTriangle(36, 56, 34, 68, 42, 68);
+  g.fillTriangle(60, 56, 58, 68, 66, 68);
+  g.fillStyle(0xfff5e0);                                  // ear fangs
+  g.fillTriangle(18, 26, 10, 8, 24, 20);
+  g.fillTriangle(78, 26, 72, 20, 86, 8);
+  g.generateTexture('bowser', 96, 112);
 
   g.clear();
   g.fillStyle(C.petal); g.fillCircle(8, 8, 8);
@@ -484,16 +515,25 @@ class GameScene extends Phaser.Scene {
     if (!wave || this.spawnedThisWave >= wave.count) return;
     const row = Phaser.Math.Between(0, ROWS - 1);
     const { y } = cellCenter(0, row);
-    const z = this.add.image(LAWN_X + LAWN_W + 40, y, 'bowserjr');
+    const isBoss = !!wave.boss;
+    const tex = isBoss ? 'bowser' : 'bowserjr';
+    const z = this.add.image(LAWN_X + LAWN_W + 40, y, tex);
     z.row = row;
-    z.hp = ZOMBIE_HP;
+    z.hp = isBoss ? BOSS_HP : ZOMBIE_HP;
+    z.maxHp = z.hp;
+    z.isBoss = isBoss;
     z.eating = false;
+    if (isBoss) {
+      z.hpBarBg = this.add.rectangle(LAWN_X + LAWN_W + 40, y - 64, 64, 10, 0x330000);
+      z.hpBar   = this.add.rectangle(LAWN_X + LAWN_W + 40, y - 64, 64, 10, 0xff2222);
+    }
     this.zombies.add(z);
     this.zombiesAlive++;
     this.spawnedThisWave++;
+    const speed = isBoss ? BOSS_SPEED : ZOMBIE_SPEED;
     this.tweens.add({
       targets: z, x: CASTLE_X + 70,
-      duration: ((LAWN_X + LAWN_W + 40) - (CASTLE_X + 70)) / ZOMBIE_SPEED * 1000,
+      duration: ((LAWN_X + LAWN_W + 40) - (CASTLE_X + 70)) / speed * 1000,
       ease: 'Linear',
       onComplete: () => this.zombieReachedHouse(z),
     });
@@ -501,6 +541,8 @@ class GameScene extends Phaser.Scene {
 
   zombieReachedHouse(z) {
     if (!z.active || this.isOver) return;
+    if (z.hpBar)   z.hpBar.destroy();
+    if (z.hpBarBg) z.hpBarBg.destroy();
     z.destroy();
     this.zombiesAlive--;
     this.hearts--;
@@ -553,10 +595,17 @@ class GameScene extends Phaser.Scene {
     if (!z.active) return;
     petal.destroy();
     z.hp -= PETAL_DAMAGE;
-    this.tweens.add({ targets: z, alpha: 0.4, duration: 60, yoyo: true });
     SFX.hit();
+    if (z.isBoss) {
+      z.setTint(0xff2200);
+      this.time.delayedCall(110, () => { if (z.active) z.clearTint(); });
+    } else {
+      this.tweens.add({ targets: z, alpha: 0.4, duration: 60, yoyo: true });
+    }
     if (z.hp <= 0) {
       this.tweens.killTweensOf(z);
+      if (z.hpBar)   z.hpBar.destroy();
+      if (z.hpBarBg) z.hpBarBg.destroy();
       this.tweens.add({
         targets: z, scaleY: 0.2, alpha: 0, duration: 200,
         onComplete: () => {
@@ -586,11 +635,26 @@ class GameScene extends Phaser.Scene {
   }
 
   showWaveBanner() {
-    const t = this.add.text(GW / 2, GH / 2, '\uD83C\uDF0A', { fontSize: '80px' }).setOrigin(0.5).setAlpha(0);
+    const wave = WAVES[this.waveIdx];
+    const isBoss = !!(wave && wave.boss);
+    const emoji = isBoss ? '\uD83D\uDC32' : '\uD83C\uDF0A'; // 🐲 or 🌊
+    const emojiSize = isBoss ? '110px' : '80px';
+    const t = this.add.text(GW / 2, GH / 2, emoji, { fontSize: emojiSize }).setOrigin(0.5).setAlpha(0);
     this.tweens.add({
       targets: t, alpha: 1, scale: 1.3, duration: 400, yoyo: true,
       onComplete: () => t.destroy(),
     });
+    if (isBoss) {
+      const label = this.add.text(GW / 2, GH / 2 + 70, 'BOSS WAVE!', {
+        fontSize: '44px', fontFamily: 'Arial Black, sans-serif',
+        color: '#ff3300', stroke: '#ffffff', strokeThickness: 6,
+      }).setOrigin(0.5).setAlpha(0);
+      this.tweens.add({
+        targets: label, alpha: 1, duration: 300, delay: 200,
+        yoyo: true, hold: 700,
+        onComplete: () => label.destroy(),
+      });
+    }
   }
 
   endGame(win) {
@@ -642,10 +706,22 @@ class GameScene extends Phaser.Scene {
       if (petal.x > LAWN_X + LAWN_W + 60) { petal.destroy(); return; }
       this.zombies.getChildren().forEach(z => {
         if (!z.active || z.row !== petal.row) return;
-        if (Math.abs(z.x - petal.x) < 28 && Math.abs(z.y - petal.y) < 30) {
+        const hitW = z.isBoss ? 48 : 28;
+        const hitH = z.isBoss ? 56 : 30;
+        if (Math.abs(z.x - petal.x) < hitW && Math.abs(z.y - petal.y) < hitH) {
           this.hitZombie(z, petal);
         }
       });
+    });
+
+    // Sync boss HP bar positions to follow the zombie
+    this.zombies.getChildren().forEach(z => {
+      if (!z.active || !z.isBoss || !z.hpBar) return;
+      const pct = Math.max(0, z.hp / z.maxHp);
+      const barW = Math.max(1, 64 * pct);
+      z.hpBarBg.setPosition(z.x, z.y - 64);
+      z.hpBar.setSize(barW, 10);
+      z.hpBar.setPosition(z.x - 32 + barW / 2, z.y - 64);
     });
   }
 }
