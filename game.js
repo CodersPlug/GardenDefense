@@ -5,7 +5,7 @@
 
 const GW = 1024;
 const GH = 576;
-const VERSION = '1.8';
+const VERSION = '1.9';
 const GAME_ID = 'gardenDefense';
 const SUN_HIT_RADIUS = 56; // generous for small fingers on touch screens
 const MAX_PLAYS_PER_DAY = 5;
@@ -540,7 +540,7 @@ class GameScene extends Phaser.Scene {
   }
 
   zombieReachedHouse(z) {
-    if (!z.active || this.isOver) return;
+    if (!z.active || z.dying || this.isOver) return;
     if (z.hpBar)   z.hpBar.destroy();
     if (z.hpBarBg) z.hpBarBg.destroy();
     z.destroy();
@@ -592,7 +592,7 @@ class GameScene extends Phaser.Scene {
   }
 
   hitZombie(z, petal) {
-    if (!z.active) return;
+    if (!z.active || z.dying) return;
     petal.destroy();
     z.hp -= PETAL_DAMAGE;
     SFX.hit();
@@ -603,9 +603,10 @@ class GameScene extends Phaser.Scene {
       this.tweens.add({ targets: z, alpha: 0.4, duration: 60, yoyo: true });
     }
     if (z.hp <= 0) {
+      z.dying = true;
       this.tweens.killTweensOf(z);
-      if (z.hpBar)   z.hpBar.destroy();
-      if (z.hpBarBg) z.hpBarBg.destroy();
+      if (z.hpBar)   { z.hpBar.destroy();   z.hpBar   = null; }
+      if (z.hpBarBg) { z.hpBarBg.destroy(); z.hpBarBg = null; }
       this.tweens.add({
         targets: z, scaleY: 0.2, alpha: 0, duration: 200,
         onComplete: () => {
@@ -705,7 +706,8 @@ class GameScene extends Phaser.Scene {
       if (!petal.active) return;
       if (petal.x > LAWN_X + LAWN_W + 60) { petal.destroy(); return; }
       this.zombies.getChildren().forEach(z => {
-        if (!z.active || z.row !== petal.row) return;
+        if (!petal.active) return;
+        if (!z.active || z.dying || z.row !== petal.row) return;
         const hitW = z.isBoss ? 48 : 28;
         const hitH = z.isBoss ? 56 : 30;
         if (Math.abs(z.x - petal.x) < hitW && Math.abs(z.y - petal.y) < hitH) {
@@ -716,7 +718,7 @@ class GameScene extends Phaser.Scene {
 
     // Sync boss HP bar positions to follow the zombie
     this.zombies.getChildren().forEach(z => {
-      if (!z.active || !z.isBoss || !z.hpBar) return;
+      if (!z.active || !z.isBoss || !z.hpBar || !z.hpBarBg || z.dying) return;
       const pct = Math.max(0, z.hp / z.maxHp);
       const barW = Math.max(1, 64 * pct);
       z.hpBarBg.setPosition(z.x, z.y - 64);
