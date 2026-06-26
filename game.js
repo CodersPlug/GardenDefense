@@ -5,13 +5,14 @@
 
 const GW = 1024;
 const GH = 576;
-const VERSION = '1.9';
+const VERSION = '2.0';
 const GAME_ID = 'gardenDefense';
 const SUN_HIT_RADIUS = 56; // generous for small fingers on touch screens
 const MAX_PLAYS_PER_DAY = 5;
 const PLAY_STORAGE_KEY  = 'phaserlab_daily_plays'; // shared with PhaserLab (same origin)
 
 const HUD_Y = 36;
+const HUD_BAR_H = 56;
 const PICKER_H = 110;
 const LAWN_X = 130;
 const LAWN_Y = 72;
@@ -46,16 +47,26 @@ const WAVES = [
   { count: 3, label: 3, boss: true },
 ];
 
+// Visual-only constants (gameplay untouched)
+const C_SKY_TOP = '#b8f0d8';
+const C_SKY_BOTTOM = '#d4f5c4';
+const CLOUD_DRIFT_SPEED = 22;
+const PLANT_SWAY_AMP = 2.5;
+const ZOMBIE_BOB_AMP = 3;
+
 const C = {
-  sky:    '#a8e6cf',
+  sky:    C_SKY_BOTTOM,
   grass:  0x6ecf8a,
   grassD: 0x5ab876,
+  grassL: 0x7ed99a,
   house:  0xffb3d9,
   castle: 0xffb3d9,
   flower: 0xff6eb4,
   sun:    0xffd23f,
   bowser: 0x3cb878,
   petal:  0xff9ed2,
+  wood:   0xc98a4b,
+  woodD:  0x9a6b35,
 };
 
 // ── SFX (Web Audio) ───────────────────────────────────────────
@@ -148,100 +159,329 @@ function tryStartGame(fromScene, stopScenes = []) {
   fromScene.scene.start('GameScene');
 }
 
+// ── Visual helpers ─────────────────────────────────────────────
+function lerpColor(c1, c2, t) {
+  const a = Phaser.Display.Color.ValueToColor(c1);
+  const b = Phaser.Display.Color.ValueToColor(c2);
+  const r = Phaser.Display.Color.Interpolate.ColorWithColor(a, b, 100, Math.floor(t * 100));
+  return Phaser.Display.Color.GetColor(r.r, r.g, r.b);
+}
+
+function makeSkyTexture(scene) {
+  if (scene.textures.exists('skyGrad')) return;
+  const g = scene.make.graphics({ x: 0, y: 0, add: false });
+  const steps = 40;
+  for (let i = 0; i < steps; i++) {
+    g.fillStyle(lerpColor(C_SKY_TOP, C_SKY_BOTTOM, i / (steps - 1)));
+    g.fillRect(0, Math.floor(i * GH / steps), GW, Math.ceil(GH / steps) + 1);
+  }
+  g.generateTexture('skyGrad', GW, GH);
+  g.destroy();
+}
+
+function addSkyBackground(scene, depth = -100) {
+  makeSkyTexture(scene);
+  scene.add.image(GW / 2, GH / 2, 'skyGrad').setDepth(depth);
+}
+
+function addDecorativeSun(scene, depth = -95) {
+  const sunX = GW - 72;
+  const sunY = 58;
+  scene.add.circle(sunX, sunY, 38, 0xfff9c4, 0.18).setDepth(depth);
+  scene.add.circle(sunX, sunY, 26, 0xffee58, 0.35).setDepth(depth + 1);
+  scene.add.circle(sunX, sunY, 18, 0xffd23f, 0.85).setDepth(depth + 2);
+}
+
+function drawCloud(scene, x, y, scale, depth = -90) {
+  const container = scene.add.container(x, y).setDepth(depth);
+  const blobs = [
+    { dx: 0, dy: 0, w: 90, h: 42 },
+    { dx: -38, dy: 6, w: 56, h: 32 },
+    { dx: 42, dy: 4, w: 64, h: 36 },
+    { dx: -12, dy: -10, w: 48, h: 28 },
+  ];
+  blobs.forEach(b => {
+    container.add(scene.add.ellipse(b.dx, b.dy, b.w * scale, b.h * scale, 0xffffff, 0.62));
+  });
+  const drift = () => {
+    const dist = GW + 160 - container.x;
+    scene.tweens.add({
+      targets: container,
+      x: GW + 120,
+      duration: (dist / CLOUD_DRIFT_SPEED) * 1000,
+      ease: 'Linear',
+      onComplete: () => {
+        container.x = -120;
+        container.y = Phaser.Math.Between(28, 170);
+        drift();
+      },
+    });
+  };
+  drift();
+  return container;
+}
+
+function addDriftingClouds(scene, count = 4, depth = -90) {
+  for (let i = 0; i < count; i++) {
+    drawCloud(
+      scene,
+      Phaser.Math.Between(-80, GW),
+      Phaser.Math.Between(30, 160),
+      Phaser.Math.FloatBetween(0.7, 1.15),
+      depth
+    );
+  }
+}
+
+function spawnJuice(scene, x, y, color, opts = {}) {
+  const count = opts.count || 4;
+  const size = opts.size || 6;
+  const spread = opts.spread || 22;
+  const duration = opts.duration || 320;
+  const shape = opts.shape || 'circle';
+  for (let i = 0; i < count; i++) {
+    const ang = (i / count) * Math.PI * 2 + Phaser.Math.FloatBetween(-0.4, 0.4);
+    const dist = Phaser.Math.Between(spread * 0.4, spread);
+    let dot;
+    if (shape === 'star') {
+      dot = scene.add.star(x, y, 5, size * 0.4, size, color, 0.95).setDepth(50);
+    } else {
+      dot = scene.add.circle(x, y, size, color, opts.alpha != null ? opts.alpha : 0.9).setDepth(50);
+    }
+    scene.tweens.add({
+      targets: dot,
+      x: x + Math.cos(ang) * dist,
+      y: y + Math.sin(ang) * dist,
+      alpha: 0,
+      scale: opts.expand ? 2.2 : 0.15,
+      angle: shape === 'star' ? Phaser.Math.Between(-90, 90) : 0,
+      duration: Phaser.Math.Between(duration * 0.7, duration),
+      onComplete: () => dot.destroy(),
+    });
+  }
+}
+
+function spawnPoof(scene, x, y) {
+  for (let i = 0; i < 5; i++) {
+    const s = Phaser.Math.Between(6, 14);
+    const dot = scene.add.circle(x + Phaser.Math.Between(-12, 12), y + Phaser.Math.Between(-8, 8), s, 0xffffff, 0.85).setDepth(50);
+    scene.tweens.add({
+      targets: dot, scale: 2.5, alpha: 0, duration: 380, delay: i * 30,
+      onComplete: () => dot.destroy(),
+    });
+  }
+}
+
+function buildStyledPlayButton(scene, x, y, radius, onTap) {
+  const glow = scene.add.circle(x, y, radius + 14, 0xff6eb4, 0.25);
+  scene.tweens.add({ targets: glow, scale: 1.15, alpha: 0.12, duration: 700, yoyo: true, repeat: -1 });
+  const shadow = scene.add.ellipse(x, y + radius * 0.55, radius * 1.6, radius * 0.35, 0x000000, 0.15);
+  const btn = scene.add.circle(x, y, radius, 0xff6eb4).setInteractive({ useHandCursor: true });
+  const highlight = scene.add.circle(x, y - radius * 0.22, radius * 0.72, 0xffb3e0, 0.45);
+  const icon = scene.add.text(x, y + 2, '\u25B6', {
+    fontSize: Math.floor(radius * 0.75) + 'px', color: '#ffffff',
+  }).setOrigin(0.5);
+  scene.tweens.add({ targets: btn, scale: 1.06, duration: 550, yoyo: true, repeat: -1 });
+  btn.on('pointerdown', onTap);
+  return { btn, glow, shadow, highlight, icon };
+}
+
+function addFlowerBorder(scene, y, depth = 5) {
+  const colors = [0xff6eb4, 0xffd23f, 0xff9ed2, 0xffee58, 0xff4da6];
+  const count = 14;
+  const step = GW / (count + 1);
+  for (let i = 0; i < count; i++) {
+    const fx = step * (i + 1);
+    scene.add.rectangle(fx, y + 18, 4, 22, 0x4a9e5c, 0.8).setDepth(depth);
+    scene.add.circle(fx, y, 10, colors[i % colors.length], 0.9).setDepth(depth + 1);
+  }
+}
+
 function makeTextures(scene) {
   const g = scene.make.graphics({ x: 0, y: 0, add: false });
 
+  // Grass tile — blade hints + highlight strip
   g.clear();
-  g.fillStyle(C.grassD); g.fillRect(0, 0, 64, 64);
-  g.fillStyle(C.grass);  g.fillRect(0, 0, 64, 20);
+  g.fillStyle(C.grassD); g.fillRoundedRect(0, 0, 64, 64, 8);
+  g.fillStyle(C.grass);  g.fillRoundedRect(2, 2, 60, 22, 6);
+  g.fillStyle(C.grassL, 0.5);
+  for (let i = 0; i < 6; i++) {
+    const bx = 8 + i * 10;
+    g.fillTriangle(bx, 18, bx + 3, 8, bx + 6, 18);
+  }
+  g.lineStyle(2, 0xffffff, 0.12);
+  g.strokeRoundedRect(1, 1, 62, 62, 8);
   g.generateTexture('grass', 64, 64);
 
+  // Castle — pink highlights, door shadow, windows, heart flag
   g.clear();
+  g.fillStyle(0xe88ab8); g.fillRoundedRect(16, 40, 48, 52, 4);
   g.fillStyle(C.castle);
-  g.fillRect(18, 38, 44, 52);
-  g.fillRect(4, 28, 20, 62);
-  g.fillRect(56, 28, 20, 62);
+  g.fillRoundedRect(18, 38, 44, 52, 4);
+  g.fillRoundedRect(4, 28, 20, 62, 4);
+  g.fillRoundedRect(56, 28, 20, 62, 4);
+  g.fillStyle(0xffcce8);
+  g.fillRoundedRect(6, 30, 6, 50, 2);
+  g.fillRoundedRect(58, 30, 6, 50, 2);
   g.fillStyle(0xff9ed2);
   for (let i = 0; i < 3; i++) { g.fillRect(6 + i * 6, 22, 5, 8); g.fillRect(58 + i * 6, 22, 5, 8); }
   for (let i = 0; i < 5; i++) g.fillRect(20 + i * 8, 32, 5, 8);
-  g.fillStyle(0xff4da6); g.fillRoundedRect(34, 62, 14, 28, 4);
+  g.fillStyle(0xcc3388); g.fillRoundedRect(34, 62, 14, 28, 4);
+  g.fillStyle(0xff4da6); g.fillRoundedRect(35, 63, 12, 26, 3);
+  g.fillStyle(0x88ccff, 0.7);
+  g.fillCircle(14, 48, 3); g.fillCircle(66, 48, 3); g.fillCircle(40, 48, 3);
   g.fillStyle(0xff6eb4); g.fillCircle(40, 14, 7);
-  g.fillStyle(0xffffff); g.fillRect(38, 8, 4, 10);
+  g.fillStyle(0xffffff); g.fillRect(38, 4, 4, 12);
+  g.fillStyle(0xff4da6);
+  g.fillCircle(40, 2, 4);
   g.generateTexture('castle', 80, 100);
 
+  // Sunflower — smile, leaf, two-tone petals
   g.clear();
-  g.fillStyle(0x4a9e5c); g.fillRect(30, 48, 8, 20);
-  g.fillStyle(0xffd23f);
+  g.fillStyle(0x3d8a4e); g.fillRect(30, 48, 8, 20);
+  g.fillStyle(0x4a9e5c); g.fillEllipse(22, 54, 14, 8);
+  g.fillStyle(0xffc107);
   for (let i = 0; i < 8; i++) {
     const ang = i * Math.PI / 4;
     g.fillCircle(34 + Math.cos(ang) * 18, 26 + Math.sin(ang) * 18, 10);
   }
+  g.fillStyle(0xffd23f);
+  for (let i = 0; i < 8; i++) {
+    const ang = i * Math.PI / 4 + 0.2;
+    g.fillCircle(34 + Math.cos(ang) * 16, 26 + Math.sin(ang) * 16, 7);
+  }
   g.fillStyle(0x8B4513); g.fillCircle(34, 26, 12);
   g.fillStyle(0xffee58); g.fillCircle(34, 26, 6);
+  g.lineStyle(2, 0x5d3a1a, 0.6);
+  g.beginPath();
+  g.arc(34, 28, 3, 0.2, Math.PI - 0.2, false);
+  g.strokePath();
   g.generateTexture('sunflower', 68, 68);
 
+  // Flower shooter — blush cheeks, leaf base, cute face
   g.clear();
-  g.fillStyle(0x4a9e5c); g.fillCircle(34, 40, 28);
+  g.fillStyle(0x3d8a4e); g.fillEllipse(34, 52, 22, 10);
+  g.fillStyle(0x4a9e5c); g.fillCircle(34, 42, 28);
   g.fillStyle(C.flower); g.fillCircle(34, 28, 22);
   g.fillStyle(0xffb3e0); g.fillCircle(22, 20, 10);
   g.fillStyle(0xffb3e0); g.fillCircle(46, 20, 10);
   g.fillStyle(0xffb3e0); g.fillCircle(34, 12, 10);
+  g.fillStyle(0xffb3e0, 0.5); g.fillCircle(26, 32, 5); g.fillCircle(42, 32, 5);
   g.fillStyle(0xffffff); g.fillCircle(28, 26, 5); g.fillCircle(40, 26, 5);
   g.fillStyle(0x333333); g.fillCircle(29, 27, 2); g.fillCircle(41, 27, 2);
+  g.lineStyle(2, 0xcc5599, 0.5);
+  g.beginPath(); g.arc(34, 30, 4, 0.3, Math.PI - 0.3, false); g.strokePath();
   g.generateTexture('flower', 68, 68);
 
+  // Sun collectible — rays + glow ring
   g.clear();
-  g.fillStyle(0xc8941f); g.fillCircle(22, 22, 22);
-  g.fillStyle(C.sun);    g.fillCircle(22, 22, 17);
+  g.fillStyle(0xfff9c4, 0.35); g.fillCircle(22, 22, 21);
+  g.fillStyle(0xffc107);
+  for (let i = 0; i < 8; i++) {
+    const ang = i * Math.PI / 4;
+    g.fillTriangle(
+      22 + Math.cos(ang) * 10, 22 + Math.sin(ang) * 10,
+      22 + Math.cos(ang - 0.15) * 22, 22 + Math.sin(ang - 0.15) * 22,
+      22 + Math.cos(ang + 0.15) * 22, 22 + Math.sin(ang + 0.15) * 22
+    );
+  }
+  g.fillStyle(0xc8941f); g.fillCircle(22, 22, 18);
+  g.fillStyle(C.sun);    g.fillCircle(22, 22, 15);
   g.fillStyle(0xfff9c4); g.fillCircle(16, 16, 5);
   g.generateTexture('sun', 44, 44);
 
-  // Bowser Jr–inspired attacker (original art, kid-friendly)
+  // Bowser Jr — softer outline, rounder belly
   g.clear();
-  g.fillStyle(C.bowser); g.fillEllipse(24, 36, 20, 22);
+  g.lineStyle(3, 0x2a8a50, 0.6);
+  g.fillStyle(C.bowser); g.fillEllipse(24, 38, 22, 24);
+  g.strokeEllipse(24, 38, 22, 24);
   g.fillCircle(24, 18, 17);
+  g.strokeCircle(24, 18, 17);
   g.fillStyle(0xff6622);
   g.fillTriangle(24, 0, 12, 14, 36, 14);
   g.fillTriangle(16, 6, 10, 16, 20, 14);
   g.fillTriangle(32, 6, 28, 14, 38, 16);
-  g.fillStyle(0xffcc66); g.fillEllipse(24, 22, 13, 10);
+  g.fillStyle(0xffcc66); g.fillEllipse(24, 22, 14, 11);
   g.fillStyle(0xffffff); g.fillCircle(17, 16, 5); g.fillCircle(31, 16, 5);
   g.fillStyle(0x222222); g.fillCircle(17, 17, 2.5); g.fillCircle(31, 17, 2.5);
   g.fillStyle(0xffffff); g.fillTriangle(20, 26, 19, 31, 21, 31); g.fillTriangle(28, 26, 27, 31, 29, 31);
   g.fillStyle(0xfff5e0); g.fillTriangle(11, 13, 8, 4, 13, 10); g.fillTriangle(37, 13, 35, 10, 40, 4);
   g.generateTexture('bowserjr', 48, 58);
 
-  // Big Bowser boss — dark green, angry, visually distinct
+  // Bowser boss — softer shell highlights
   g.clear();
-  g.fillStyle(0x1a6e35); g.fillEllipse(48, 80, 48, 52); // body
-  g.fillCircle(48, 38, 36);                               // head
-  g.fillStyle(0x7a3e00);                                  // shell back
-  g.fillRect(22, 56, 52, 36);
-  g.fillStyle(0xff5500);                                  // tall bold spikes
-  g.fillTriangle(48, 0, 28, 26, 68, 26);                 // center spike
-  g.fillTriangle(28, 8, 12, 28, 38, 26);                 // left spike
-  g.fillTriangle(68, 8, 58, 26, 84, 28);                 // right spike
-  g.fillStyle(0xffcc44); g.fillEllipse(48, 50, 30, 22);  // snout
+  g.fillStyle(0x1a6e35); g.fillEllipse(48, 82, 50, 54);
+  g.fillCircle(48, 38, 36);
+  g.fillStyle(0x2d9048); g.fillEllipse(48, 78, 38, 28);
+  g.fillStyle(0x7a3e00);
+  g.fillRoundedRect(22, 56, 52, 36, 6);
+  g.fillStyle(0x9a5520, 0.5);
+  g.fillRoundedRect(28, 60, 40, 14, 4);
+  g.fillStyle(0xff5500);
+  g.fillTriangle(48, 0, 28, 26, 68, 26);
+  g.fillTriangle(28, 8, 12, 28, 38, 26);
+  g.fillTriangle(68, 8, 58, 26, 84, 28);
+  g.fillStyle(0xffcc44); g.fillEllipse(48, 50, 30, 22);
   g.fillStyle(0xffffff);
-  g.fillCircle(32, 32, 12); g.fillCircle(64, 32, 12);    // eyes white
-  g.fillStyle(0xff2200);
-  g.fillCircle(32, 34, 7); g.fillCircle(64, 34, 7);      // red pupils (angry)
-  g.fillStyle(0x111111);
-  g.fillCircle(33, 35, 3.5); g.fillCircle(65, 35, 3.5); // pupils
-  g.fillStyle(0x111111);                                  // angry eyebrows
+  g.fillCircle(32, 32, 12); g.fillCircle(64, 32, 12);
+  g.fillStyle(0xff6644);
+  g.fillCircle(32, 34, 6); g.fillCircle(64, 34, 6);
+  g.fillStyle(0x222222);
+  g.fillCircle(33, 35, 3); g.fillCircle(65, 35, 3);
+  g.fillStyle(0x333333);
   g.fillTriangle(22, 22, 32, 30, 44, 22);
   g.fillTriangle(52, 22, 64, 30, 74, 22);
-  g.fillStyle(0xffffff);                                  // teeth
-  g.fillTriangle(36, 56, 34, 68, 42, 68);
-  g.fillTriangle(60, 56, 58, 68, 66, 68);
-  g.fillStyle(0xfff5e0);                                  // ear fangs
+  g.fillStyle(0xffffff);
+  g.fillTriangle(36, 56, 34, 66, 42, 66);
+  g.fillTriangle(60, 56, 58, 66, 66, 66);
+  g.fillStyle(0xfff5e0);
   g.fillTriangle(18, 26, 10, 8, 24, 20);
   g.fillTriangle(78, 26, 72, 20, 86, 8);
   g.generateTexture('bowser', 96, 112);
 
+  // Petal — heart-shaped projectile
   g.clear();
-  g.fillStyle(C.petal); g.fillCircle(8, 8, 8);
-  g.generateTexture('petal', 16, 16);
+  g.fillStyle(C.petal);
+  g.fillCircle(8, 6, 5);
+  g.fillCircle(14, 6, 5);
+  g.fillTriangle(8, 8, 11, 15, 14, 8);
+  g.fillStyle(0xffcce8, 0.5); g.fillCircle(9, 6, 2);
+  g.generateTexture('petal', 22, 18);
+
+  // HUD / UI textures
+  g.clear();
+  g.fillStyle(0xffffff, 0.55); g.fillRoundedRect(0, 0, GW, HUD_BAR_H, 0);
+  g.lineStyle(2, 0xffb3d9, 0.4); g.strokeRoundedRect(1, 1, GW - 2, HUD_BAR_H - 2, 0);
+  g.generateTexture('hudBar', GW, HUD_BAR_H);
+
+  g.clear();
+  g.fillStyle(0xffffff, 0.7); g.fillRoundedRect(0, 0, 80, 36, 18);
+  g.lineStyle(2, 0xffd23f, 0.5); g.strokeRoundedRect(1, 1, 78, 34, 17);
+  g.generateTexture('sunPill', 80, 36);
+
+  g.clear();
+  g.fillStyle(0xffffff, 0.45); g.fillRoundedRect(0, 0, 130, 40, 12);
+  g.lineStyle(2, 0xffffff, 0.25); g.strokeRoundedRect(1, 1, 128, 38, 11);
+  g.generateTexture('waveBox', 130, 40);
+
+  g.clear();
+  g.fillStyle(C.wood); g.fillRoundedRect(0, 0, GW, PICKER_H, 0);
+  g.fillStyle(C.woodD); g.fillRect(0, PICKER_H - 8, GW, 8);
+  g.fillStyle(0x5ab876, 0.7); g.fillRect(0, 0, GW, 10);
+  g.generateTexture('pickerShelf', GW, PICKER_H);
+
+  g.clear();
+  g.fillStyle(0xffffff, 0.35); g.fillRoundedRect(0, 0, 100, 90, 14);
+  g.lineStyle(2, 0xffffff, 0.3); g.strokeRoundedRect(1, 1, 98, 88, 13);
+  g.generateTexture('pickerCard', 100, 90);
+
+  g.clear();
+  g.fillStyle(0x330000, 0.8); g.fillRoundedRect(0, 0, 64, 12, 6);
+  g.generateTexture('hpBarBg', 64, 12);
+
+  g.clear();
+  g.fillStyle(0x44cc44); g.fillRoundedRect(0, 0, 64, 12, 6);
+  g.generateTexture('hpBarFill', 64, 12);
 
   g.destroy();
 }
@@ -261,23 +501,35 @@ function gridFromPointer(px, py) {
   return { col, row };
 }
 
+function bossBarColor(pct) {
+  if (pct > 0.5) return 0x44cc44;
+  if (pct > 0.25) return 0xffcc00;
+  return 0xff3333;
+}
+
 // ── Menu ──────────────────────────────────────────────────────
 class MenuScene extends Phaser.Scene {
   constructor() { super('MenuScene'); }
 
+  preload() { makeTextures(this); }
+
   create() {
-    this.cameras.main.setBackgroundColor(C.sky);
-    for (let i = 0; i < 5; i++) {
-      this.add.ellipse(
-        Phaser.Math.Between(60, GW - 60), Phaser.Math.Between(40, 160),
-        Phaser.Math.Between(90, 160), 40, 0xffffff, 0.75
-      );
-    }
-    this.add.text(GW / 2, GH / 2 - 120, '\uD83C\uDFF0', { fontSize: '88px' }).setOrigin(0.5);
-    this.add.text(GW / 2, GH / 2 - 30, 'Garden Defense', {
+    addSkyBackground(this);
+    addDecorativeSun(this);
+    addDriftingClouds(this, 5);
+
+    const castle = this.add.image(GW / 2, GH / 2 - 120, 'castle').setScale(1.1);
+    this.tweens.add({ targets: castle, y: castle.y - 6, duration: 1400, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
+
+    const title = this.add.text(GW / 2, GH / 2 - 30, 'Garden Defense', {
       fontSize: '42px', fontFamily: 'Arial Black, sans-serif',
       color: '#ff4da6', stroke: '#ffffff', strokeThickness: 6,
     }).setOrigin(0.5);
+    this.add.text(GW / 2 + 2, GH / 2 - 28, 'Garden Defense', {
+      fontSize: '42px', fontFamily: 'Arial Black, sans-serif', color: '#cc338866',
+    }).setOrigin(0.5).setDepth(-1);
+    this.add.text(GW / 2 - 200, GH / 2 - 30, '\uD83C\uDF38', { fontSize: '32px' }).setOrigin(0.5);
+    this.add.text(GW / 2 + 200, GH / 2 - 30, '\uD83C\uDF3C', { fontSize: '32px' }).setOrigin(0.5);
 
     const rem = DailyPlays.remaining();
     const startX = GW / 2 - (MAX_PLAYS_PER_DAY - 1) * 22;
@@ -287,13 +539,8 @@ class MenuScene extends Phaser.Scene {
       }).setOrigin(0.5);
     }
 
-    const play = this.add.circle(GW / 2, GH / 2 + 90, 64, 0xff6eb4)
-      .setInteractive({ useHandCursor: true });
-    this.add.text(GW / 2, GH / 2 + 90, '\u25B6', {
-      fontSize: '48px', color: '#ffffff',
-    }).setOrigin(0.5);
-    this.tweens.add({ targets: play, scale: 1.08, duration: 600, yoyo: true, repeat: -1 });
-    play.on('pointerdown', () => tryStartGame(this));
+    buildStyledPlayButton(this, GW / 2, GH / 2 + 90, 64, () => tryStartGame(this));
+    addFlowerBorder(this, GH - 28);
 
     const versionLabel = this.add.text(8, GH - 6, 'v' + VERSION, {
       fontSize: '13px', fontFamily: 'monospace', color: '#ffffff88',
@@ -315,19 +562,33 @@ class GameScene extends Phaser.Scene {
   preload() { makeTextures(this); }
 
   create() {
-    this.cameras.main.setBackgroundColor(C.sky);
+    addSkyBackground(this);
+    addDecorativeSun(this);
+    addDriftingClouds(this, 4);
 
-    // Lawn + grid lines (subtle)
-    this.add.rectangle(LAWN_X + LAWN_W / 2, LAWN_Y + LAWN_H / 2, LAWN_W, LAWN_H, C.grass, 0.35);
+    // Dirt path behind castle
+    this.add.rectangle(LAWN_X - 55, LAWN_Y + LAWN_H / 2, 110, LAWN_H + 8, 0x8B6914, 0.55)
+      .setStrokeStyle(3, 0x6b4f10, 0.4);
+
+    // Garden tile grid
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
         const { x, y } = cellCenter(c, r);
-        this.add.rectangle(x, y, CELL_W - 6, CELL_H - 6, C.grass, r % 2 === c % 2 ? 0.22 : 0.12)
-          .setStrokeStyle(2, 0xffffff, 0.15);
+        const tint = r % 2 === 0 ? C.grass : C.grassD;
+        const light = r % 2 === 0 ? C.grassL : C.grass;
+        const tile = this.add.graphics();
+        tile.fillStyle(tint, 0.55);
+        tile.fillRoundedRect(x - CELL_W / 2 + 3, y - CELL_H / 2 + 3, CELL_W - 6, CELL_H - 6, 10);
+        tile.fillStyle(light, 0.25);
+        tile.fillRoundedRect(x - CELL_W / 2 + 5, y - CELL_H / 2 + 5, CELL_W - 10, (CELL_H - 6) * 0.3, 6);
+        tile.lineStyle(2, 0xffffff, 0.12);
+        tile.strokeRoundedRect(x - CELL_W / 2 + 3, y - CELL_H / 2 + 3, CELL_W - 6, CELL_H - 6, 10);
       }
     }
 
-    this.add.image(CASTLE_X, LAWN_Y + LAWN_H / 2, 'castle').setScale(1.15);
+    const castleY = LAWN_Y + LAWN_H / 2;
+    this.add.ellipse(CASTLE_X + 8, castleY + 48, 70, 18, 0x000000, 0.18);
+    this.castleSprite = this.add.image(CASTLE_X, castleY, 'castle').setScale(1.15);
 
     this.sunCount = START_SUN;
     this.hearts = MAX_HEARTS;
@@ -358,7 +619,6 @@ class GameScene extends Phaser.Scene {
   handleTap(pointer, currentlyOver) {
     if (this.isOver || this.isPaused) return;
 
-    // Priority 1: Phaser hit-test on interactive suns (large hit circle)
     for (const go of currentlyOver) {
       if (go.getData('isSun')) {
         this.collectSun(go);
@@ -368,10 +628,7 @@ class GameScene extends Phaser.Scene {
 
     const x = pointer.worldX;
     const y = pointer.worldY;
-
-    // Priority 2: distance fallback (covers edge taps Phaser may miss)
     if (this.tapHitsSun(x, y)) return;
-
     this.onTap(x, y);
   }
 
@@ -400,13 +657,17 @@ class GameScene extends Phaser.Scene {
       new Phaser.Geom.Circle(0, 0, SUN_HIT_RADIUS),
       Phaser.Geom.Circle.Contains
     );
+    this.tweens.add({ targets: sun, angle: 360, duration: 8000, repeat: -1, ease: 'Linear' });
   }
 
   buildHUD() {
-    this.add.image(36, HUD_Y, 'sun').setScale(0.9);
-    this.sunText = this.add.text(62, HUD_Y, '' + this.sunCount, {
-      fontSize: '32px', fontFamily: 'Arial Black, sans-serif',
-      color: '#ffffff', stroke: '#8a6910', strokeThickness: 5,
+    this.add.image(GW / 2, HUD_BAR_H / 2, 'hudBar').setOrigin(0.5);
+
+    this.add.image(72, HUD_Y, 'sunPill').setOrigin(0.5);
+    this.add.image(36, HUD_Y, 'sun').setScale(0.75);
+    this.sunText = this.add.text(58, HUD_Y, '' + this.sunCount, {
+      fontSize: '28px', fontFamily: 'Arial Black, sans-serif',
+      color: '#ffffff', stroke: '#8a6910', strokeThickness: 4,
     }).setOrigin(0, 0.5);
 
     this.heartIcons = [];
@@ -417,6 +678,7 @@ class GameScene extends Phaser.Scene {
       this.heartIcons.push(h);
     }
 
+    this.add.image(GW - 148, HUD_Y, 'waveBox').setOrigin(0.5);
     this.waveIcons = [];
     for (let i = 0; i < WAVES.length; i++) {
       const w = this.add.text(GW - 180 + i * 36, HUD_Y, '\uD83C\uDF0A', {
@@ -425,10 +687,12 @@ class GameScene extends Phaser.Scene {
       this.waveIcons.push(w);
     }
 
-    this.pauseBtn = this.add.circle(GW - 44, HUD_Y, 30, 0x000000, 0.45)
+    this.add.ellipse(GW - 44, HUD_Y + 18, 38, 10, 0x000000, 0.15);
+    this.pauseBtn = this.add.circle(GW - 44, HUD_Y, 28, 0xff6eb4)
       .setInteractive({ useHandCursor: true });
+    this.pauseBtn.setStrokeStyle(2, 0xffffff, 0.5);
     this.pauseIcon = this.add.text(GW - 44, HUD_Y, '\u23F8', {
-      fontSize: '30px', color: '#ffffff',
+      fontSize: '28px', color: '#ffffff',
     }).setOrigin(0.5);
     this.pauseBtn.on('pointerdown', () => this.togglePause());
 
@@ -439,41 +703,74 @@ class GameScene extends Phaser.Scene {
 
   buildPicker() {
     const py = GH - PICKER_H / 2;
-    this.add.rectangle(GW / 2, py, GW, PICKER_H, 0xffb3d9, 0.45);
+    this.add.image(GW / 2, py, 'pickerShelf').setOrigin(0.5);
 
+    this.pickerSlots = [];
     const slots = [
       { kind: 'sunflower', tex: 'sunflower', x: GW / 2 - 120, cost: SUNFLOWER_COST },
       { kind: 'flower',    tex: 'flower',    x: GW / 2 + 20,  cost: FLOWER_COST },
     ];
 
     slots.forEach(({ kind, tex, x, cost }) => {
+      const card = this.add.image(x, py - 4, 'pickerCard').setOrigin(0.5);
       const icon = this.add.image(x, py - 8, tex).setScale(0.82)
         .setInteractive({ useHandCursor: true });
       this.add.image(x + 28, py + 32, 'sun').setScale(0.42);
-      this.add.text(x + 46, py + 32, '' + cost, {
+      const costText = this.add.text(x + 46, py + 32, '' + cost, {
         fontSize: '20px', fontFamily: 'Arial Black, sans-serif', color: '#ffffff',
         stroke: '#8a6910', strokeThickness: 4,
       }).setOrigin(0, 0.5);
       icon.on('pointerdown', () => {
         this.selectedPlant = kind;
         this.pickerRing.setPosition(x, py - 8);
+        this.tweens.add({ targets: icon, scale: 0.95, duration: 80, yoyo: true });
+        this.tweens.add({ targets: card, scale: 1.05, duration: 80, yoyo: true });
         SFX.plant();
       });
+      const slot = { kind, icon, card, costText, cost, x };
+      this.pickerSlots.push(slot);
       if (kind === 'sunflower') this.pickerSunflower = icon;
       else this.pickerFlower = icon;
     });
 
-    this.pickerRing = this.add.circle(GW / 2 - 120, py - 8, 46).setStrokeStyle(4, 0xff4da6);
+    this.pickerRing = this.add.circle(GW / 2 - 120, py - 8, 48).setStrokeStyle(4, 0xff4da6);
+    this.tweens.add({ targets: this.pickerRing, scale: 1.06, alpha: 0.7, duration: 600, yoyo: true, repeat: -1 });
+    this.refreshPickerAfford();
   }
 
-  refreshSun() { this.sunText.setText('' + this.sunCount); }
+  refreshPickerAfford() {
+    if (!this.pickerSlots) return;
+    this.pickerSlots.forEach(slot => {
+      const canAfford = this.sunCount >= slot.cost;
+      const alpha = canAfford ? 1 : 0.45;
+      slot.icon.setAlpha(alpha);
+      slot.card.setAlpha(canAfford ? 1 : 0.55);
+      slot.costText.setAlpha(alpha);
+    });
+  }
+
+  refreshSun() {
+    this.sunText.setText('' + this.sunCount);
+    this.refreshPickerAfford();
+  }
 
   refreshHearts() {
-    this.heartIcons.forEach((h, i) => h.setAlpha(i < this.hearts ? 1 : 0.2));
+    const lostIdx = this.hearts;
+    this.heartIcons.forEach((h, i) => {
+      const alive = i < this.hearts;
+      h.setAlpha(alive ? 1 : 0.2);
+      if (!alive && i === lostIdx) {
+        this.tweens.add({ targets: h, scale: 1.5, duration: 150, yoyo: true });
+      }
+    });
   }
 
   spawnPlantSun(plant) {
     if (this.isOver) return;
+    this.tweens.add({
+      targets: plant, scaleY: plant.scaleY * 0.88, scaleX: plant.scaleX * 1.06,
+      duration: 140, yoyo: true, ease: 'Back.out',
+    });
     const sun = this.add.image(plant.x, plant.y - 24, 'sun').setScale(0.72);
     this.suns.add(sun);
     this.setupSunHitArea(sun);
@@ -499,6 +796,7 @@ class GameScene extends Phaser.Scene {
     sun.setData('collected', true);
     sun.disableInteractive();
     this.tweens.killTweensOf(sun);
+    spawnJuice(this, sun.x, sun.y, 0xffd23f, { count: 6, shape: 'star', size: 7, spread: 28 });
     this.sunCount += SUN_VALUE;
     this.refreshSun();
     SFX.sun();
@@ -519,13 +817,16 @@ class GameScene extends Phaser.Scene {
     const tex = isBoss ? 'bowser' : 'bowserjr';
     const z = this.add.image(LAWN_X + LAWN_W + 40, y, tex);
     z.row = row;
+    z.baseY = y;
+    z.bobPhase = Phaser.Math.FloatBetween(0, Math.PI * 2);
     z.hp = isBoss ? BOSS_HP : ZOMBIE_HP;
     z.maxHp = z.hp;
     z.isBoss = isBoss;
     z.eating = false;
     if (isBoss) {
-      z.hpBarBg = this.add.rectangle(LAWN_X + LAWN_W + 40, y - 64, 64, 10, 0x330000);
-      z.hpBar   = this.add.rectangle(LAWN_X + LAWN_W + 40, y - 64, 64, 10, 0xff2222);
+      z.hpBarBg = this.add.image(LAWN_X + LAWN_W + 40, y - 64, 'hpBarBg').setOrigin(0.5);
+      z.hpBar   = this.add.image(LAWN_X + LAWN_W + 40, y - 64, 'hpBarFill').setOrigin(0, 0.5);
+      z.hpBar.setCrop(0, 0, 64, 12);
     }
     this.zombies.add(z);
     this.zombiesAlive++;
@@ -549,6 +850,10 @@ class GameScene extends Phaser.Scene {
     this.refreshHearts();
     SFX.oops();
     this.cameras.main.shake(120, 0.008);
+    if (this.castleSprite) {
+      this.castleSprite.setTint(0xff88cc);
+      this.time.delayedCall(220, () => { if (this.castleSprite) this.castleSprite.clearTint(); });
+    }
     if (this.hearts <= 0) this.endGame(false);
     else this.checkWaveClear();
   }
@@ -575,11 +880,14 @@ class GameScene extends Phaser.Scene {
     plant.col = col;
     plant.row = row;
     plant.kind = kind;
+    plant.baseY = y;
+    plant.swayPhase = Phaser.Math.FloatBetween(0, Math.PI * 2);
     plant.lastShot = 0;
     plant.lastSun = this.time.now;
     this.plants.add(plant);
     this.grid[row][col] = plant;
     SFX.plant();
+    spawnJuice(this, x, y, 0x5ab876, { count: 4, size: 5, spread: 20, duration: 280 });
     this.tweens.add({ targets: plant, scale: 0.95, duration: 120, yoyo: true });
   }
 
@@ -593,7 +901,10 @@ class GameScene extends Phaser.Scene {
 
   hitZombie(z, petal) {
     if (!z.active || z.dying) return;
+    const px = petal.x;
+    const py = petal.y;
     petal.destroy();
+    spawnJuice(this, px, py, 0xff9ed2, { count: 5, size: 4, spread: 16, duration: 220 });
     z.hp -= PETAL_DAMAGE;
     SFX.hit();
     if (z.isBoss) {
@@ -604,6 +915,7 @@ class GameScene extends Phaser.Scene {
     }
     if (z.hp <= 0) {
       z.dying = true;
+      spawnPoof(this, z.x, z.y);
       this.tweens.killTweensOf(z);
       if (z.hpBar)   { z.hpBar.destroy();   z.hpBar   = null; }
       if (z.hpBarBg) { z.hpBarBg.destroy(); z.hpBarBg = null; }
@@ -638,7 +950,7 @@ class GameScene extends Phaser.Scene {
   showWaveBanner() {
     const wave = WAVES[this.waveIdx];
     const isBoss = !!(wave && wave.boss);
-    const emoji = isBoss ? '\uD83D\uDC32' : '\uD83C\uDF0A'; // 🐲 or 🌊
+    const emoji = isBoss ? '\uD83D\uDC32' : '\uD83C\uDF0A';
     const emojiSize = isBoss ? '110px' : '80px';
     const t = this.add.text(GW / 2, GH / 2, emoji, { fontSize: emojiSize }).setOrigin(0.5).setAlpha(0);
     this.tweens.add({
@@ -686,6 +998,7 @@ class GameScene extends Phaser.Scene {
 
     this.plants.getChildren().forEach(plant => {
       if (!plant.active) return;
+      plant.y = plant.baseY + Math.sin(time / 900 + plant.swayPhase) * PLANT_SWAY_AMP;
       if (plant.kind === 'sunflower') {
         if (time - (plant.lastSun || 0) > SUNFLOWER_SUN_MS) {
           plant.lastSun = time;
@@ -710,20 +1023,22 @@ class GameScene extends Phaser.Scene {
         if (!z.active || z.dying || z.row !== petal.row) return;
         const hitW = z.isBoss ? 48 : 28;
         const hitH = z.isBoss ? 56 : 30;
-        if (Math.abs(z.x - petal.x) < hitW && Math.abs(z.y - petal.y) < hitH) {
+        if (Math.abs(z.x - petal.x) < hitW && Math.abs(z.baseY - petal.y) < hitH) {
           this.hitZombie(z, petal);
         }
       });
     });
 
-    // Sync boss HP bar positions to follow the zombie
     this.zombies.getChildren().forEach(z => {
-      if (!z.active || !z.isBoss || !z.hpBar || !z.hpBarBg || z.dying) return;
+      if (!z.active || z.dying) return;
+      z.y = z.baseY + Math.sin(time / 280 + z.bobPhase) * ZOMBIE_BOB_AMP;
+      if (!z.isBoss || !z.hpBar || !z.hpBarBg) return;
       const pct = Math.max(0, z.hp / z.maxHp);
       const barW = Math.max(1, 64 * pct);
       z.hpBarBg.setPosition(z.x, z.y - 64);
-      z.hpBar.setSize(barW, 10);
-      z.hpBar.setPosition(z.x - 32 + barW / 2, z.y - 64);
+      z.hpBar.setTint(bossBarColor(pct));
+      z.hpBar.setCrop(0, 0, barW, 12);
+      z.hpBar.setPosition(z.x - 32, z.y - 64);
     });
   }
 }
@@ -732,24 +1047,48 @@ class GameScene extends Phaser.Scene {
 class EndScene extends Phaser.Scene {
   constructor() { super('EndScene'); }
 
+  preload() { makeTextures(this); }
+
   create(data) {
     const win = !!(data && data.win);
-    this.add.rectangle(GW / 2, GH / 2, GW, GH, 0x000000, 0.55);
+    addSkyBackground(this);
+    addDriftingClouds(this, 3);
+
+    this.add.rectangle(GW / 2, GH / 2, GW, GH, win ? 0x000000 : 0x1a1030, win ? 0.35 : 0.5);
+
+    if (win) {
+      const colors = [0xff6eb4, 0xffd23f, 0x6ecf8a, 0xff9ed2, 0x88ccff];
+      for (let i = 0; i < 28; i++) {
+        const c = colors[i % colors.length];
+        const piece = this.add.circle(
+          Phaser.Math.Between(40, GW - 40), -20,
+          Phaser.Math.Between(4, 10), c, 0.9
+        );
+        this.tweens.add({
+          targets: piece,
+          y: GH + 30,
+          angle: Phaser.Math.Between(-360, 360),
+          duration: Phaser.Math.Between(2000, 4000),
+          delay: Phaser.Math.Between(0, 1200),
+          onComplete: () => piece.destroy(),
+        });
+      }
+    }
+
     this.add.text(GW / 2, GH / 2 - 100, win ? '\uD83C\uDFF0' : '\uD83D\uDE22', {
       fontSize: '88px',
     }).setOrigin(0.5);
     this.add.text(GW / 2, GH / 2 - 10, win ? 'YOU WIN!' : 'TRY AGAIN', {
       fontSize: '48px', fontFamily: 'Arial Black, sans-serif',
-      color: win ? '#ff6eb4' : '#ff8888', stroke: '#ffffff', strokeThickness: 6,
+      color: win ? '#ff6eb4' : '#ffaaaa', stroke: '#ffffff', strokeThickness: 6,
     }).setOrigin(0.5);
 
-    const again = this.add.circle(GW / 2, GH / 2 + 90, 58, win ? 0xff6eb4 : 0x9b8ec4)
-      .setInteractive({ useHandCursor: true });
-    this.add.text(GW / 2, GH / 2 + 90, '\u25B6', { fontSize: '44px', color: '#fff' }).setOrigin(0.5);
-    again.on('pointerdown', () => tryStartGame(this, ['EndScene', 'GameScene']));
+    buildStyledPlayButton(this, GW / 2, GH / 2 + 90, 58, () => tryStartGame(this, ['EndScene', 'GameScene']));
 
+    const homeShadow = this.add.ellipse(GW / 2, GH / 2 + 200, 52, 12, 0x000000, 0.12);
     const home = this.add.circle(GW / 2, GH / 2 + 190, 44, 0x6ecf8a)
       .setInteractive({ useHandCursor: true });
+    home.setStrokeStyle(2, 0xffffff, 0.4);
     this.add.text(GW / 2, GH / 2 + 190, '\u2B50', { fontSize: '32px' }).setOrigin(0.5);
     home.on('pointerdown', () => this.scene.start('MenuScene'));
   }
@@ -759,8 +1098,14 @@ class EndScene extends Phaser.Scene {
 class DailyLimitScene extends Phaser.Scene {
   constructor() { super('DailyLimitScene'); }
 
+  preload() { makeTextures(this); }
+
   create() {
-    this.add.rectangle(GW / 2, GH / 2, GW, GH, 0x1a2a4a);
+    addSkyBackground(this);
+    addDecorativeSun(this, -80);
+    addDriftingClouds(this, 3, -85);
+
+    this.add.rectangle(GW / 2, GH / 2, GW, GH, 0x1a2a4a, 0.45);
 
     for (let i = 0; i < 8; i++) {
       this.add.text(Phaser.Math.Between(60, GW - 60), Phaser.Math.Between(40, 200), '\u2728', {
@@ -778,6 +1123,7 @@ class DailyLimitScene extends Phaser.Scene {
 
     const home = this.add.circle(GW / 2, GH / 2 + 170, 52, 0x44c767)
       .setInteractive({ useHandCursor: true });
+    home.setStrokeStyle(2, 0xffffff, 0.35);
     this.add.text(GW / 2, GH / 2 + 170, '\u2B50', { fontSize: '40px' }).setOrigin(0.5);
     home.on('pointerdown', () => this.scene.start('MenuScene'));
 
@@ -785,7 +1131,6 @@ class DailyLimitScene extends Phaser.Scene {
       fontSize: '13px', fontFamily: 'monospace', color: '#ffffff44',
     }).setOrigin(0, 1);
 
-    // Parent reset: hold the moon 3 s
     let holdEvt = null;
     moon.on('pointerdown', () => {
       holdEvt = this.time.delayedCall(3000, () => { DailyPlays.reset(); this.scene.start('MenuScene'); });
