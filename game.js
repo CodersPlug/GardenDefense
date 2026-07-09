@@ -1,11 +1,12 @@
 // =============================================================
-//  Garden Defense — simple PvZ for ~6 year olds
-//  Defend the pink castle! Sunflowers make sun, flowers shoot petals.
+//  Garden Defense — Chess Edition — simple PvZ for ~6 year olds
+//  Defend the pink castle! White pawns charge sun energy,
+//  white rooks fire star bolts at the black chess army.
 // =============================================================
 
 const GW = 1024;
 const GH = 576;
-const VERSION = '2.0';
+const VERSION = '3.0';
 const GAME_ID = 'gardenDefense';
 const SUN_HIT_RADIUS = 56; // generous for small fingers on touch screens
 const MAX_PLAYS_PER_DAY = 5;
@@ -27,15 +28,15 @@ const CASTLE_X = 48;
 const START_SUN = 75;
 const SUN_VALUE = 25;
 const SUN_DROP_MS = 5500;
-const SUNFLOWER_COST = 25;
-const SUNFLOWER_SUN_MS = 9000;
-const FLOWER_COST = 50;
-const FLOWER_SHOOT_MS = 1300;
-const PETAL_SPEED = 340;
-const PETAL_DAMAGE = 1;
-const ZOMBIE_HP = 3;
-const ZOMBIE_SPEED = 28;
-const ZOMBIE_SPAWN_MS = 4200;
+const PAWN_COST = 25;
+const PAWN_SUN_MS = 9000;
+const ROOK_COST = 50;
+const ROOK_SHOOT_MS = 1300;
+const BOLT_SPEED = 340;
+const BOLT_DAMAGE = 1;
+const PAWN_HP = 3;
+const PAWN_SPEED = 28;
+const PAWN_SPAWN_MS = 4200;
 const MAX_HEARTS = 5;
 
 const BOSS_HP = 12;
@@ -55,18 +56,23 @@ const PLANT_SWAY_AMP = 2.5;
 const ZOMBIE_BOB_AMP = 3;
 
 const C = {
-  sky:    C_SKY_BOTTOM,
-  grass:  0x6ecf8a,
-  grassD: 0x5ab876,
-  grassL: 0x7ed99a,
-  house:  0xffb3d9,
-  castle: 0xffb3d9,
-  flower: 0xff6eb4,
-  sun:    0xffd23f,
-  bowser: 0x3cb878,
-  petal:  0xff9ed2,
-  wood:   0xc98a4b,
-  woodD:  0x9a6b35,
+  sky:        C_SKY_BOTTOM,
+  boardLight: 0xfff3e0,
+  boardDark:  0xf2a6d1,
+  boardAccent:0xffe0f0,
+  house:      0xffb3d9,
+  castle:     0xffb3d9,
+  whiteBody:  0xfff8ef,
+  whiteShade: 0xf0dfd0,
+  whiteTrim:  0xff9ed2,
+  sun:        0xffd23f,
+  blackBody:  0x4a3f7a,
+  blackShade: 0x332b5c,
+  bolt:       0xfff2a8,
+  crownGold:  0xffd23f,
+  crownGoldD: 0xc8941f,
+  wood:       0xc98a4b,
+  woodD:      0x9a6b35,
 };
 
 // ── SFX (Web Audio) ───────────────────────────────────────────
@@ -286,32 +292,19 @@ function buildStyledPlayButton(scene, x, y, radius, onTap) {
   return { btn, glow, shadow, highlight, icon };
 }
 
-function addFlowerBorder(scene, y, depth = 5) {
-  const colors = [0xff6eb4, 0xffd23f, 0xff9ed2, 0xffee58, 0xff4da6];
+function addPieceBorder(scene, y, depth = 5) {
+  const colors = [0xffffff, 0x4a3f7a, 0xff6eb4, 0xffd23f, 0xf2a6d1];
   const count = 14;
   const step = GW / (count + 1);
   for (let i = 0; i < count; i++) {
     const fx = step * (i + 1);
-    scene.add.rectangle(fx, y + 18, 4, 22, 0x4a9e5c, 0.8).setDepth(depth);
+    scene.add.rectangle(fx, y + 18, 4, 22, 0x8a6a4b, 0.8).setDepth(depth);
     scene.add.circle(fx, y, 10, colors[i % colors.length], 0.9).setDepth(depth + 1);
   }
 }
 
 function makeTextures(scene) {
   const g = scene.make.graphics({ x: 0, y: 0, add: false });
-
-  // Grass tile — blade hints + highlight strip
-  g.clear();
-  g.fillStyle(C.grassD); g.fillRoundedRect(0, 0, 64, 64, 8);
-  g.fillStyle(C.grass);  g.fillRoundedRect(2, 2, 60, 22, 6);
-  g.fillStyle(C.grassL, 0.5);
-  for (let i = 0; i < 6; i++) {
-    const bx = 8 + i * 10;
-    g.fillTriangle(bx, 18, bx + 3, 8, bx + 6, 18);
-  }
-  g.lineStyle(2, 0xffffff, 0.12);
-  g.strokeRoundedRect(1, 1, 62, 62, 8);
-  g.generateTexture('grass', 64, 64);
 
   // Castle — pink highlights, door shadow, windows, heart flag
   g.clear();
@@ -336,42 +329,43 @@ function makeTextures(scene) {
   g.fillCircle(40, 2, 4);
   g.generateTexture('castle', 80, 100);
 
-  // Sunflower — smile, leaf, two-tone petals
+  // White Pawn (was sunflower) — round ivory body, collar ring, gold spark, cute face
   g.clear();
-  g.fillStyle(0x3d8a4e); g.fillRect(30, 48, 8, 20);
-  g.fillStyle(0x4a9e5c); g.fillEllipse(22, 54, 14, 8);
-  g.fillStyle(0xffc107);
-  for (let i = 0; i < 8; i++) {
-    const ang = i * Math.PI / 4;
-    g.fillCircle(34 + Math.cos(ang) * 18, 26 + Math.sin(ang) * 18, 10);
-  }
-  g.fillStyle(0xffd23f);
-  for (let i = 0; i < 8; i++) {
-    const ang = i * Math.PI / 4 + 0.2;
-    g.fillCircle(34 + Math.cos(ang) * 16, 26 + Math.sin(ang) * 16, 7);
-  }
-  g.fillStyle(0x8B4513); g.fillCircle(34, 26, 12);
-  g.fillStyle(0xffee58); g.fillCircle(34, 26, 6);
-  g.lineStyle(2, 0x5d3a1a, 0.6);
-  g.beginPath();
-  g.arc(34, 28, 3, 0.2, Math.PI - 0.2, false);
-  g.strokePath();
-  g.generateTexture('sunflower', 68, 68);
+  g.fillStyle(C.whiteShade, 0.6); g.fillEllipse(34, 60, 20, 8);
+  g.fillStyle(C.whiteBody); g.fillRoundedRect(20, 50, 28, 14, 6);
+  g.fillStyle(C.whiteShade); g.fillEllipse(34, 44, 20, 10);
+  g.fillStyle(C.whiteBody); g.fillCircle(34, 38, 17);
+  g.fillStyle(C.whiteTrim); g.fillEllipse(34, 27, 19, 6);
+  g.fillStyle(C.whiteBody); g.fillCircle(34, 18, 13);
+  g.fillStyle(0xffffff); g.fillCircle(34, 9, 5);
+  g.fillStyle(0xffffff); g.fillCircle(28, 17, 5); g.fillCircle(40, 17, 5);
+  g.fillStyle(0x333333); g.fillCircle(29, 18, 2.2); g.fillCircle(41, 18, 2.2);
+  g.fillStyle(0xffb3e0, 0.6); g.fillCircle(23, 24, 4); g.fillCircle(45, 24, 4);
+  g.lineStyle(2, 0xcc8866, 0.6);
+  g.beginPath(); g.arc(34, 22, 4, 0.2, Math.PI - 0.2, false); g.strokePath();
+  g.fillStyle(C.crownGold);
+  g.fillTriangle(34, 37, 31, 44, 37, 44);
+  g.fillTriangle(28, 41, 34, 44, 40, 41);
+  g.generateTexture('whitePawn', 68, 68);
 
-  // Flower shooter — blush cheeks, leaf base, cute face
+  // White Rook (was flower shooter) — cute tower, crenellations, blush face
   g.clear();
-  g.fillStyle(0x3d8a4e); g.fillEllipse(34, 52, 22, 10);
-  g.fillStyle(0x4a9e5c); g.fillCircle(34, 42, 28);
-  g.fillStyle(C.flower); g.fillCircle(34, 28, 22);
-  g.fillStyle(0xffb3e0); g.fillCircle(22, 20, 10);
-  g.fillStyle(0xffb3e0); g.fillCircle(46, 20, 10);
-  g.fillStyle(0xffb3e0); g.fillCircle(34, 12, 10);
-  g.fillStyle(0xffb3e0, 0.5); g.fillCircle(26, 32, 5); g.fillCircle(42, 32, 5);
+  g.fillStyle(C.whiteShade, 0.6); g.fillEllipse(34, 58, 24, 10);
+  g.fillStyle(C.whiteBody); g.fillRoundedRect(16, 48, 36, 10, 4);
+  g.fillStyle(C.whiteBody); g.fillRoundedRect(14, 20, 40, 34, 8);
+  g.fillStyle(C.whiteShade, 0.5); g.fillRoundedRect(14, 40, 40, 12, 6);
+  g.fillStyle(C.whiteBody);
+  for (let i = 0; i < 4; i++) g.fillRect(16 + i * 10, 8, 8, 14);
+  g.fillStyle(C.whiteTrim); g.fillRect(16, 20, 40, 4);
   g.fillStyle(0xffffff); g.fillCircle(28, 26, 5); g.fillCircle(40, 26, 5);
   g.fillStyle(0x333333); g.fillCircle(29, 27, 2); g.fillCircle(41, 27, 2);
+  g.fillStyle(0xffb3e0, 0.6); g.fillCircle(22, 32, 5); g.fillCircle(42, 32, 5);
   g.lineStyle(2, 0xcc5599, 0.5);
   g.beginPath(); g.arc(34, 30, 4, 0.3, Math.PI - 0.3, false); g.strokePath();
-  g.generateTexture('flower', 68, 68);
+  g.fillStyle(C.whiteTrim);
+  g.fillTriangle(28, 47, 34, 53, 30, 53);
+  g.fillTriangle(40, 47, 38, 53, 34, 53);
+  g.generateTexture('whiteRook', 68, 68);
 
   // Sun collectible — rays + glow ring
   g.clear();
@@ -390,11 +384,12 @@ function makeTextures(scene) {
   g.fillStyle(0xfff9c4); g.fillCircle(16, 16, 5);
   g.generateTexture('sun', 44, 44);
 
-  // Bowser Jr — softer outline, rounder belly
+  // Black Pawn (was Bowser Jr) — round dark body, collar ring, flame tuft, cute-villain face
   g.clear();
-  g.lineStyle(3, 0x2a8a50, 0.6);
-  g.fillStyle(C.bowser); g.fillEllipse(24, 38, 22, 24);
+  g.lineStyle(3, C.blackShade, 0.6);
+  g.fillStyle(C.blackBody); g.fillEllipse(24, 38, 22, 24);
   g.strokeEllipse(24, 38, 22, 24);
+  g.fillStyle(0x5d4fa0); g.fillEllipse(24, 30, 20, 6);
   g.fillCircle(24, 18, 17);
   g.strokeCircle(24, 18, 17);
   g.fillStyle(0xff6622);
@@ -406,22 +401,24 @@ function makeTextures(scene) {
   g.fillStyle(0x222222); g.fillCircle(17, 17, 2.5); g.fillCircle(31, 17, 2.5);
   g.fillStyle(0xffffff); g.fillTriangle(20, 26, 19, 31, 21, 31); g.fillTriangle(28, 26, 27, 31, 29, 31);
   g.fillStyle(0xfff5e0); g.fillTriangle(11, 13, 8, 4, 13, 10); g.fillTriangle(37, 13, 35, 10, 40, 4);
-  g.generateTexture('bowserjr', 48, 58);
+  g.generateTexture('blackPawn', 48, 58);
 
-  // Bowser boss — softer shell highlights
+  // Black King boss — big regal body, crown, cape, menacing but round
   g.clear();
-  g.fillStyle(0x1a6e35); g.fillEllipse(48, 82, 50, 54);
+  g.fillStyle(0x241b42); g.fillEllipse(48, 82, 50, 54);
   g.fillCircle(48, 38, 36);
-  g.fillStyle(0x2d9048); g.fillEllipse(48, 78, 38, 28);
-  g.fillStyle(0x7a3e00);
+  g.fillStyle(0x392a5c); g.fillEllipse(48, 78, 38, 28);
+  g.fillStyle(0x2b2450);
   g.fillRoundedRect(22, 56, 52, 36, 6);
-  g.fillStyle(0x9a5520, 0.5);
+  g.fillStyle(0xffd23f, 0.35);
   g.fillRoundedRect(28, 60, 40, 14, 4);
-  g.fillStyle(0xff5500);
-  g.fillTriangle(48, 0, 28, 26, 68, 26);
-  g.fillTriangle(28, 8, 12, 28, 38, 26);
-  g.fillTriangle(68, 8, 58, 26, 84, 28);
-  g.fillStyle(0xffcc44); g.fillEllipse(48, 50, 30, 22);
+  g.fillStyle(C.crownGold);
+  g.fillRect(24, 20, 48, 8);
+  g.fillTriangle(28, 20, 22, 6, 36, 20);
+  g.fillTriangle(48, 20, 40, 2, 56, 20);
+  g.fillTriangle(68, 20, 60, 6, 74, 20);
+  g.fillStyle(0xff3355); g.fillCircle(48, 4, 5);
+  g.fillStyle(0xd8c8f0); g.fillEllipse(48, 50, 30, 22);
   g.fillStyle(0xffffff);
   g.fillCircle(32, 32, 12); g.fillCircle(64, 32, 12);
   g.fillStyle(0xff6644);
@@ -434,19 +431,19 @@ function makeTextures(scene) {
   g.fillStyle(0xffffff);
   g.fillTriangle(36, 56, 34, 66, 42, 66);
   g.fillTriangle(60, 56, 58, 66, 66, 66);
-  g.fillStyle(0xfff5e0);
+  g.fillStyle(C.crownGold);
   g.fillTriangle(18, 26, 10, 8, 24, 20);
   g.fillTriangle(78, 26, 72, 20, 86, 8);
-  g.generateTexture('bowser', 96, 112);
+  g.generateTexture('blackKing', 96, 112);
 
-  // Petal — heart-shaped projectile
+  // Star bolt (was petal) — magic sparkle projectile fired by rooks
   g.clear();
-  g.fillStyle(C.petal);
-  g.fillCircle(8, 6, 5);
-  g.fillCircle(14, 6, 5);
-  g.fillTriangle(8, 8, 11, 15, 14, 8);
-  g.fillStyle(0xffcce8, 0.5); g.fillCircle(9, 6, 2);
-  g.generateTexture('petal', 22, 18);
+  g.fillStyle(C.bolt);
+  g.fillTriangle(11, 0, 2, 9, 20, 9);
+  g.fillTriangle(2, 9, 20, 9, 11, 18);
+  g.fillStyle(C.crownGold, 0.9); g.fillCircle(11, 9, 4);
+  g.fillStyle(0xffffff, 0.8); g.fillCircle(9, 7, 1.6);
+  g.generateTexture('bolt', 22, 18);
 
   // HUD / UI textures
   g.clear();
@@ -467,7 +464,7 @@ function makeTextures(scene) {
   g.clear();
   g.fillStyle(C.wood); g.fillRoundedRect(0, 0, GW, PICKER_H, 0);
   g.fillStyle(C.woodD); g.fillRect(0, PICKER_H - 8, GW, 8);
-  g.fillStyle(0x5ab876, 0.7); g.fillRect(0, 0, GW, 10);
+  g.fillStyle(0xf2a6d1, 0.5); g.fillRect(0, 0, GW, 10);
   g.generateTexture('pickerShelf', GW, PICKER_H);
 
   g.clear();
@@ -521,15 +518,15 @@ class MenuScene extends Phaser.Scene {
     const castle = this.add.image(GW / 2, GH / 2 - 120, 'castle').setScale(1.1);
     this.tweens.add({ targets: castle, y: castle.y - 6, duration: 1400, yoyo: true, repeat: -1, ease: 'Sine.inOut' });
 
-    const title = this.add.text(GW / 2, GH / 2 - 30, 'Garden Defense', {
+    const title = this.add.text(GW / 2, GH / 2 - 30, 'Chess Defense', {
       fontSize: '42px', fontFamily: 'Arial Black, sans-serif',
       color: '#ff4da6', stroke: '#ffffff', strokeThickness: 6,
     }).setOrigin(0.5);
-    this.add.text(GW / 2 + 2, GH / 2 - 28, 'Garden Defense', {
+    this.add.text(GW / 2 + 2, GH / 2 - 28, 'Chess Defense', {
       fontSize: '42px', fontFamily: 'Arial Black, sans-serif', color: '#cc338866',
     }).setOrigin(0.5).setDepth(-1);
-    this.add.text(GW / 2 - 200, GH / 2 - 30, '\uD83C\uDF38', { fontSize: '32px' }).setOrigin(0.5);
-    this.add.text(GW / 2 + 200, GH / 2 - 30, '\uD83C\uDF3C', { fontSize: '32px' }).setOrigin(0.5);
+    this.add.text(GW / 2 - 200, GH / 2 - 30, '\u2659', { fontSize: '32px', color: '#ffffff' }).setOrigin(0.5);
+    this.add.text(GW / 2 + 200, GH / 2 - 30, '\u265F', { fontSize: '32px', color: '#4a3f7a' }).setOrigin(0.5);
 
     const rem = DailyPlays.remaining();
     const startX = GW / 2 - (MAX_PLAYS_PER_DAY - 1) * 22;
@@ -540,7 +537,7 @@ class MenuScene extends Phaser.Scene {
     }
 
     buildStyledPlayButton(this, GW / 2, GH / 2 + 90, 64, () => tryStartGame(this));
-    addFlowerBorder(this, GH - 28);
+    addPieceBorder(this, GH - 28);
 
     const versionLabel = this.add.text(8, GH - 6, 'v' + VERSION, {
       fontSize: '13px', fontFamily: 'monospace', color: '#ffffff88',
@@ -566,22 +563,23 @@ class GameScene extends Phaser.Scene {
     addDecorativeSun(this);
     addDriftingClouds(this, 4);
 
-    // Dirt path behind castle
+    // Wooden frame behind castle
     this.add.rectangle(LAWN_X - 55, LAWN_Y + LAWN_H / 2, 110, LAWN_H + 8, 0x8B6914, 0.55)
       .setStrokeStyle(3, 0x6b4f10, 0.4);
 
-    // Garden tile grid
+    // Chessboard grid — alternating light/dark squares
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
         const { x, y } = cellCenter(c, r);
-        const tint = r % 2 === 0 ? C.grass : C.grassD;
-        const light = r % 2 === 0 ? C.grassL : C.grass;
+        const isLight = (r + c) % 2 === 0;
+        const tint = isLight ? C.boardLight : C.boardDark;
+        const light = isLight ? C.boardAccent : C.boardLight;
         const tile = this.add.graphics();
-        tile.fillStyle(tint, 0.55);
+        tile.fillStyle(tint, 0.7);
         tile.fillRoundedRect(x - CELL_W / 2 + 3, y - CELL_H / 2 + 3, CELL_W - 6, CELL_H - 6, 10);
-        tile.fillStyle(light, 0.25);
+        tile.fillStyle(light, 0.3);
         tile.fillRoundedRect(x - CELL_W / 2 + 5, y - CELL_H / 2 + 5, CELL_W - 10, (CELL_H - 6) * 0.3, 6);
-        tile.lineStyle(2, 0xffffff, 0.12);
+        tile.lineStyle(2, 0xffffff, 0.15);
         tile.strokeRoundedRect(x - CELL_W / 2 + 3, y - CELL_H / 2 + 3, CELL_W - 6, CELL_H - 6, 10);
       }
     }
@@ -594,15 +592,15 @@ class GameScene extends Phaser.Scene {
     this.hearts = MAX_HEARTS;
     this.waveIdx = 0;
     this.spawnedThisWave = 0;
-    this.zombiesAlive = 0;
+    this.enemiesAlive = 0;
     this.isOver = false;
     this.isPaused = false;
-    this.selectedPlant = 'sunflower';
+    this.selectedPiece = 'pawn';
     this.grid = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
 
-    this.plants = this.add.group();
-    this.zombies = this.add.group();
-    this.petals = this.physics.add.group();
+    this.whitePieces = this.add.group();
+    this.blackPieces = this.add.group();
+    this.bolts = this.physics.add.group();
     this.suns = this.add.group();
 
     this.buildHUD();
@@ -610,8 +608,8 @@ class GameScene extends Phaser.Scene {
 
     this.time.addEvent({ delay: SUN_DROP_MS, callback: () => this.dropSun(), loop: true });
     this.time.delayedCall(2000, () => this.dropSun());
-    this.time.addEvent({ delay: ZOMBIE_SPAWN_MS, callback: () => this.trySpawnZombie(), loop: true });
-    this.time.delayedCall(3000, () => this.trySpawnZombie());
+    this.time.addEvent({ delay: PAWN_SPAWN_MS, callback: () => this.trySpawnEnemy(), loop: true });
+    this.time.delayedCall(3000, () => this.trySpawnEnemy());
 
     this.input.on('pointerdown', (pointer, currentlyOver) => this.handleTap(pointer, currentlyOver));
   }
@@ -681,8 +679,8 @@ class GameScene extends Phaser.Scene {
     this.add.image(GW - 148, HUD_Y, 'waveBox').setOrigin(0.5);
     this.waveIcons = [];
     for (let i = 0; i < WAVES.length; i++) {
-      const w = this.add.text(GW - 180 + i * 36, HUD_Y, '\uD83C\uDF0A', {
-        fontSize: '28px', alpha: i === 0 ? 1 : 0.25,
+      const w = this.add.text(GW - 180 + i * 36, HUD_Y, '\u265F', {
+        fontSize: '28px', color: '#4a3f7a', alpha: i === 0 ? 1 : 0.25,
       }).setOrigin(0.5);
       this.waveIcons.push(w);
     }
@@ -707,8 +705,8 @@ class GameScene extends Phaser.Scene {
 
     this.pickerSlots = [];
     const slots = [
-      { kind: 'sunflower', tex: 'sunflower', x: GW / 2 - 120, cost: SUNFLOWER_COST },
-      { kind: 'flower',    tex: 'flower',    x: GW / 2 + 20,  cost: FLOWER_COST },
+      { kind: 'pawn', tex: 'whitePawn', x: GW / 2 - 120, cost: PAWN_COST },
+      { kind: 'rook', tex: 'whiteRook', x: GW / 2 + 20,  cost: ROOK_COST },
     ];
 
     slots.forEach(({ kind, tex, x, cost }) => {
@@ -721,7 +719,7 @@ class GameScene extends Phaser.Scene {
         stroke: '#8a6910', strokeThickness: 4,
       }).setOrigin(0, 0.5);
       icon.on('pointerdown', () => {
-        this.selectedPlant = kind;
+        this.selectedPiece = kind;
         this.pickerRing.setPosition(x, py - 8);
         this.tweens.add({ targets: icon, scale: 0.95, duration: 80, yoyo: true });
         this.tweens.add({ targets: card, scale: 1.05, duration: 80, yoyo: true });
@@ -729,8 +727,8 @@ class GameScene extends Phaser.Scene {
       });
       const slot = { kind, icon, card, costText, cost, x };
       this.pickerSlots.push(slot);
-      if (kind === 'sunflower') this.pickerSunflower = icon;
-      else this.pickerFlower = icon;
+      if (kind === 'pawn') this.pickerPawnIcon = icon;
+      else this.pickerRookIcon = icon;
     });
 
     this.pickerRing = this.add.circle(GW / 2 - 120, py - 8, 48).setStrokeStyle(4, 0xff4da6);
@@ -765,16 +763,16 @@ class GameScene extends Phaser.Scene {
     });
   }
 
-  spawnPlantSun(plant) {
+  spawnPieceSun(piece) {
     if (this.isOver) return;
     this.tweens.add({
-      targets: plant, scaleY: plant.scaleY * 0.88, scaleX: plant.scaleX * 1.06,
+      targets: piece, scaleY: piece.scaleY * 0.88, scaleX: piece.scaleX * 1.06,
       duration: 140, yoyo: true, ease: 'Back.out',
     });
-    const sun = this.add.image(plant.x, plant.y - 24, 'sun').setScale(0.72);
+    const sun = this.add.image(piece.x, piece.y - 24, 'sun').setScale(0.72);
     this.suns.add(sun);
     this.setupSunHitArea(sun);
-    this.tweens.add({ targets: sun, y: plant.y + 8, duration: 900, ease: 'Sine.out' });
+    this.tweens.add({ targets: sun, y: piece.y + 8, duration: 900, ease: 'Sine.out' });
     this.tweens.add({ targets: sun, scale: 0.85, duration: 450, yoyo: true, repeat: -1 });
   }
 
@@ -807,45 +805,45 @@ class GameScene extends Phaser.Scene {
     return true;
   }
 
-  trySpawnZombie() {
+  trySpawnEnemy() {
     if (this.isOver) return;
     const wave = WAVES[this.waveIdx];
     if (!wave || this.spawnedThisWave >= wave.count) return;
     const row = Phaser.Math.Between(0, ROWS - 1);
     const { y } = cellCenter(0, row);
     const isBoss = !!wave.boss;
-    const tex = isBoss ? 'bowser' : 'bowserjr';
-    const z = this.add.image(LAWN_X + LAWN_W + 40, y, tex);
-    z.row = row;
-    z.baseY = y;
-    z.bobPhase = Phaser.Math.FloatBetween(0, Math.PI * 2);
-    z.hp = isBoss ? BOSS_HP : ZOMBIE_HP;
-    z.maxHp = z.hp;
-    z.isBoss = isBoss;
-    z.eating = false;
+    const tex = isBoss ? 'blackKing' : 'blackPawn';
+    const e = this.add.image(LAWN_X + LAWN_W + 40, y, tex);
+    e.row = row;
+    e.baseY = y;
+    e.bobPhase = Phaser.Math.FloatBetween(0, Math.PI * 2);
+    e.hp = isBoss ? BOSS_HP : PAWN_HP;
+    e.maxHp = e.hp;
+    e.isBoss = isBoss;
+    e.eating = false;
     if (isBoss) {
-      z.hpBarBg = this.add.image(LAWN_X + LAWN_W + 40, y - 64, 'hpBarBg').setOrigin(0.5);
-      z.hpBar   = this.add.image(LAWN_X + LAWN_W + 40, y - 64, 'hpBarFill').setOrigin(0, 0.5);
-      z.hpBar.setCrop(0, 0, 64, 12);
+      e.hpBarBg = this.add.image(LAWN_X + LAWN_W + 40, y - 64, 'hpBarBg').setOrigin(0.5);
+      e.hpBar   = this.add.image(LAWN_X + LAWN_W + 40, y - 64, 'hpBarFill').setOrigin(0, 0.5);
+      e.hpBar.setCrop(0, 0, 64, 12);
     }
-    this.zombies.add(z);
-    this.zombiesAlive++;
+    this.blackPieces.add(e);
+    this.enemiesAlive++;
     this.spawnedThisWave++;
-    const speed = isBoss ? BOSS_SPEED : ZOMBIE_SPEED;
+    const speed = isBoss ? BOSS_SPEED : PAWN_SPEED;
     this.tweens.add({
-      targets: z, x: CASTLE_X + 70,
+      targets: e, x: CASTLE_X + 70,
       duration: ((LAWN_X + LAWN_W + 40) - (CASTLE_X + 70)) / speed * 1000,
       ease: 'Linear',
-      onComplete: () => this.zombieReachedHouse(z),
+      onComplete: () => this.enemyReachedCastle(e),
     });
   }
 
-  zombieReachedHouse(z) {
-    if (!z.active || z.dying || this.isOver) return;
-    if (z.hpBar)   z.hpBar.destroy();
-    if (z.hpBarBg) z.hpBarBg.destroy();
-    z.destroy();
-    this.zombiesAlive--;
+  enemyReachedCastle(e) {
+    if (!e.active || e.dying || this.isOver) return;
+    if (e.hpBar)   e.hpBar.destroy();
+    if (e.hpBarBg) e.hpBarBg.destroy();
+    e.destroy();
+    this.enemiesAlive--;
     this.hearts--;
     this.refreshHearts();
     SFX.oops();
@@ -866,64 +864,64 @@ class GameScene extends Phaser.Scene {
     if (!cell) return;
     if (this.tapHitsSun(x, y, cell)) return;
     if (this.grid[cell.row][cell.col]) return;
-    const cost = this.selectedPlant === 'sunflower' ? SUNFLOWER_COST : FLOWER_COST;
-    if (this.sunCount >= cost) this.placePlant(cell.col, cell.row, this.selectedPlant);
+    const cost = this.selectedPiece === 'pawn' ? PAWN_COST : ROOK_COST;
+    if (this.sunCount >= cost) this.placePiece(cell.col, cell.row, this.selectedPiece);
   }
 
-  placePlant(col, row, kind) {
-    const cost = kind === 'sunflower' ? SUNFLOWER_COST : FLOWER_COST;
+  placePiece(col, row, kind) {
+    const cost = kind === 'pawn' ? PAWN_COST : ROOK_COST;
     this.sunCount -= cost;
     this.refreshSun();
     const { x, y } = cellCenter(col, row);
-    const tex = kind === 'sunflower' ? 'sunflower' : 'flower';
-    const plant = this.add.image(x, y, tex).setScale(0.82);
-    plant.col = col;
-    plant.row = row;
-    plant.kind = kind;
-    plant.baseY = y;
-    plant.swayPhase = Phaser.Math.FloatBetween(0, Math.PI * 2);
-    plant.lastShot = 0;
-    plant.lastSun = this.time.now;
-    this.plants.add(plant);
-    this.grid[row][col] = plant;
+    const tex = kind === 'pawn' ? 'whitePawn' : 'whiteRook';
+    const piece = this.add.image(x, y, tex).setScale(0.82);
+    piece.col = col;
+    piece.row = row;
+    piece.kind = kind;
+    piece.baseY = y;
+    piece.swayPhase = Phaser.Math.FloatBetween(0, Math.PI * 2);
+    piece.lastShot = 0;
+    piece.lastSun = this.time.now;
+    this.whitePieces.add(piece);
+    this.grid[row][col] = piece;
     SFX.plant();
     spawnJuice(this, x, y, 0x5ab876, { count: 4, size: 5, spread: 20, duration: 280 });
-    this.tweens.add({ targets: plant, scale: 0.95, duration: 120, yoyo: true });
+    this.tweens.add({ targets: piece, scale: 0.95, duration: 120, yoyo: true });
   }
 
-  shootFrom(plant) {
-    const petal = this.petals.create(plant.x + 24, plant.y, 'petal');
-    petal.body.setAllowGravity(false);
-    petal.setVelocityX(PETAL_SPEED);
-    petal.row = plant.row;
+  shootFrom(piece) {
+    const bolt = this.bolts.create(piece.x + 24, piece.y, 'bolt');
+    bolt.body.setAllowGravity(false);
+    bolt.setVelocityX(BOLT_SPEED);
+    bolt.row = piece.row;
     SFX.shoot();
   }
 
-  hitZombie(z, petal) {
-    if (!z.active || z.dying) return;
-    const px = petal.x;
-    const py = petal.y;
-    petal.destroy();
-    spawnJuice(this, px, py, 0xff9ed2, { count: 5, size: 4, spread: 16, duration: 220 });
-    z.hp -= PETAL_DAMAGE;
+  hitEnemy(e, bolt) {
+    if (!e.active || e.dying) return;
+    const px = bolt.x;
+    const py = bolt.y;
+    bolt.destroy();
+    spawnJuice(this, px, py, 0xfff2a8, { count: 5, size: 4, spread: 16, duration: 220 });
+    e.hp -= BOLT_DAMAGE;
     SFX.hit();
-    if (z.isBoss) {
-      z.setTint(0xff2200);
-      this.time.delayedCall(110, () => { if (z.active) z.clearTint(); });
+    if (e.isBoss) {
+      e.setTint(0xff2200);
+      this.time.delayedCall(110, () => { if (e.active) e.clearTint(); });
     } else {
-      this.tweens.add({ targets: z, alpha: 0.4, duration: 60, yoyo: true });
+      this.tweens.add({ targets: e, alpha: 0.4, duration: 60, yoyo: true });
     }
-    if (z.hp <= 0) {
-      z.dying = true;
-      spawnPoof(this, z.x, z.y);
-      this.tweens.killTweensOf(z);
-      if (z.hpBar)   { z.hpBar.destroy();   z.hpBar   = null; }
-      if (z.hpBarBg) { z.hpBarBg.destroy(); z.hpBarBg = null; }
+    if (e.hp <= 0) {
+      e.dying = true;
+      spawnPoof(this, e.x, e.y);
+      this.tweens.killTweensOf(e);
+      if (e.hpBar)   { e.hpBar.destroy();   e.hpBar   = null; }
+      if (e.hpBarBg) { e.hpBarBg.destroy(); e.hpBarBg = null; }
       this.tweens.add({
-        targets: z, scaleY: 0.2, alpha: 0, duration: 200,
+        targets: e, scaleY: 0.2, alpha: 0, duration: 200,
         onComplete: () => {
-          z.destroy();
-          this.zombiesAlive--;
+          e.destroy();
+          this.enemiesAlive--;
           this.checkWaveClear();
         },
       });
@@ -933,7 +931,7 @@ class GameScene extends Phaser.Scene {
   checkWaveClear() {
     const wave = WAVES[this.waveIdx];
     if (!wave) return;
-    if (this.spawnedThisWave >= wave.count && this.zombiesAlive <= 0) {
+    if (this.spawnedThisWave >= wave.count && this.enemiesAlive <= 0) {
       if (this.waveIdx >= WAVES.length - 1) {
         this.endGame(true);
         return;
@@ -950,15 +948,16 @@ class GameScene extends Phaser.Scene {
   showWaveBanner() {
     const wave = WAVES[this.waveIdx];
     const isBoss = !!(wave && wave.boss);
-    const emoji = isBoss ? '\uD83D\uDC32' : '\uD83C\uDF0A';
+    const emoji = isBoss ? '\u265A' : '\u265F';
+    const emojiColor = isBoss ? '#ffd23f' : '#4a3f7a';
     const emojiSize = isBoss ? '110px' : '80px';
-    const t = this.add.text(GW / 2, GH / 2, emoji, { fontSize: emojiSize }).setOrigin(0.5).setAlpha(0);
+    const t = this.add.text(GW / 2, GH / 2, emoji, { fontSize: emojiSize, color: emojiColor, stroke: '#ffffff', strokeThickness: 4 }).setOrigin(0.5).setAlpha(0);
     this.tweens.add({
       targets: t, alpha: 1, scale: 1.3, duration: 400, yoyo: true,
       onComplete: () => t.destroy(),
     });
     if (isBoss) {
-      const label = this.add.text(GW / 2, GH / 2 + 70, 'BOSS WAVE!', {
+      const label = this.add.text(GW / 2, GH / 2 + 70, 'CHECK!', {
         fontSize: '44px', fontFamily: 'Arial Black, sans-serif',
         color: '#ff3300', stroke: '#ffffff', strokeThickness: 6,
       }).setOrigin(0.5).setAlpha(0);
@@ -996,49 +995,49 @@ class GameScene extends Phaser.Scene {
   update(time) {
     if (this.isOver || this.isPaused) return;
 
-    this.plants.getChildren().forEach(plant => {
-      if (!plant.active) return;
-      plant.y = plant.baseY + Math.sin(time / 900 + plant.swayPhase) * PLANT_SWAY_AMP;
-      if (plant.kind === 'sunflower') {
-        if (time - (plant.lastSun || 0) > SUNFLOWER_SUN_MS) {
-          plant.lastSun = time;
-          this.spawnPlantSun(plant);
+    this.whitePieces.getChildren().forEach(piece => {
+      if (!piece.active) return;
+      piece.y = piece.baseY + Math.sin(time / 900 + piece.swayPhase) * PLANT_SWAY_AMP;
+      if (piece.kind === 'pawn') {
+        if (time - (piece.lastSun || 0) > PAWN_SUN_MS) {
+          piece.lastSun = time;
+          this.spawnPieceSun(piece);
         }
         return;
       }
-      const blocker = this.zombies.getChildren().find(z =>
-        z.active && z.row === plant.row && z.x > plant.x
+      const blocker = this.blackPieces.getChildren().find(e =>
+        e.active && e.row === piece.row && e.x > piece.x
       );
-      if (blocker && time - (plant.lastShot || 0) > FLOWER_SHOOT_MS) {
-        plant.lastShot = time;
-        this.shootFrom(plant);
+      if (blocker && time - (piece.lastShot || 0) > ROOK_SHOOT_MS) {
+        piece.lastShot = time;
+        this.shootFrom(piece);
       }
     });
 
-    this.petals.getChildren().forEach(petal => {
-      if (!petal.active) return;
-      if (petal.x > LAWN_X + LAWN_W + 60) { petal.destroy(); return; }
-      this.zombies.getChildren().forEach(z => {
-        if (!petal.active) return;
-        if (!z.active || z.dying || z.row !== petal.row) return;
-        const hitW = z.isBoss ? 48 : 28;
-        const hitH = z.isBoss ? 56 : 30;
-        if (Math.abs(z.x - petal.x) < hitW && Math.abs(z.baseY - petal.y) < hitH) {
-          this.hitZombie(z, petal);
+    this.bolts.getChildren().forEach(bolt => {
+      if (!bolt.active) return;
+      if (bolt.x > LAWN_X + LAWN_W + 60) { bolt.destroy(); return; }
+      this.blackPieces.getChildren().forEach(e => {
+        if (!bolt.active) return;
+        if (!e.active || e.dying || e.row !== bolt.row) return;
+        const hitW = e.isBoss ? 48 : 28;
+        const hitH = e.isBoss ? 56 : 30;
+        if (Math.abs(e.x - bolt.x) < hitW && Math.abs(e.baseY - bolt.y) < hitH) {
+          this.hitEnemy(e, bolt);
         }
       });
     });
 
-    this.zombies.getChildren().forEach(z => {
-      if (!z.active || z.dying) return;
-      z.y = z.baseY + Math.sin(time / 280 + z.bobPhase) * ZOMBIE_BOB_AMP;
-      if (!z.isBoss || !z.hpBar || !z.hpBarBg) return;
-      const pct = Math.max(0, z.hp / z.maxHp);
+    this.blackPieces.getChildren().forEach(e => {
+      if (!e.active || e.dying) return;
+      e.y = e.baseY + Math.sin(time / 280 + e.bobPhase) * ZOMBIE_BOB_AMP;
+      if (!e.isBoss || !e.hpBar || !e.hpBarBg) return;
+      const pct = Math.max(0, e.hp / e.maxHp);
       const barW = Math.max(1, 64 * pct);
-      z.hpBarBg.setPosition(z.x, z.y - 64);
-      z.hpBar.setTint(bossBarColor(pct));
-      z.hpBar.setCrop(0, 0, barW, 12);
-      z.hpBar.setPosition(z.x - 32, z.y - 64);
+      e.hpBarBg.setPosition(e.x, e.y - 64);
+      e.hpBar.setTint(bossBarColor(pct));
+      e.hpBar.setCrop(0, 0, barW, 12);
+      e.hpBar.setPosition(e.x - 32, e.y - 64);
     });
   }
 }
@@ -1078,7 +1077,7 @@ class EndScene extends Phaser.Scene {
     this.add.text(GW / 2, GH / 2 - 100, win ? '\uD83C\uDFF0' : '\uD83D\uDE22', {
       fontSize: '88px',
     }).setOrigin(0.5);
-    this.add.text(GW / 2, GH / 2 - 10, win ? 'YOU WIN!' : 'TRY AGAIN', {
+    this.add.text(GW / 2, GH / 2 - 10, win ? 'CHECKMATE!' : 'TRY AGAIN', {
       fontSize: '48px', fontFamily: 'Arial Black, sans-serif',
       color: win ? '#ff6eb4' : '#ffaaaa', stroke: '#ffffff', strokeThickness: 6,
     }).setOrigin(0.5);
