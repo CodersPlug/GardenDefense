@@ -6,7 +6,7 @@
 
 const GW = 1024;
 const GH = 576;
-const VERSION = '3.0';
+const VERSION = '3.1';
 const GAME_ID = 'gardenDefense';
 const SUN_HIT_RADIUS = 56; // generous for small fingers on touch screens
 const MAX_PLAYS_PER_DAY = 5;
@@ -305,6 +305,7 @@ function addPieceBorder(scene, y, depth = 5) {
 
 function makeTextures(scene) {
   const g = scene.make.graphics({ x: 0, y: 0, add: false });
+  const avatar = KidAvatar.load();
 
   // Castle — pink highlights, door shadow, windows, heart flag
   g.clear();
@@ -329,26 +330,22 @@ function makeTextures(scene) {
   g.fillCircle(40, 2, 4);
   g.generateTexture('castle', 80, 100);
 
-  // White Pawn (was sunflower) — round ivory body, collar ring, gold spark, cute face
+  // White Pawn — ivory body + KidAvatar face (remove+rebuild so avatar stays current)
+  if (scene.textures.exists('whitePawn')) scene.textures.remove('whitePawn');
   g.clear();
   g.fillStyle(C.whiteShade, 0.6); g.fillEllipse(34, 60, 20, 8);
   g.fillStyle(C.whiteBody); g.fillRoundedRect(20, 50, 28, 14, 6);
   g.fillStyle(C.whiteShade); g.fillEllipse(34, 44, 20, 10);
   g.fillStyle(C.whiteBody); g.fillCircle(34, 38, 17);
   g.fillStyle(C.whiteTrim); g.fillEllipse(34, 27, 19, 6);
-  g.fillStyle(C.whiteBody); g.fillCircle(34, 18, 13);
-  g.fillStyle(0xffffff); g.fillCircle(34, 9, 5);
-  g.fillStyle(0xffffff); g.fillCircle(28, 17, 5); g.fillCircle(40, 17, 5);
-  g.fillStyle(0x333333); g.fillCircle(29, 18, 2.2); g.fillCircle(41, 18, 2.2);
-  g.fillStyle(0xffb3e0, 0.6); g.fillCircle(23, 24, 4); g.fillCircle(45, 24, 4);
-  g.lineStyle(2, 0xcc8866, 0.6);
-  g.beginPath(); g.arc(34, 22, 4, 0.2, Math.PI - 0.2, false); g.strokePath();
   g.fillStyle(C.crownGold);
   g.fillTriangle(34, 37, 31, 44, 37, 44);
   g.fillTriangle(28, 41, 34, 44, 40, 41);
+  KidAvatar.drawHead(g, 34, 18, 12, avatar);
   g.generateTexture('whitePawn', 68, 68);
 
-  // White Rook (was flower shooter) — cute tower, crenellations, blush face
+  // White Rook — ivory tower + KidAvatar face (remove+rebuild so avatar stays current)
+  if (scene.textures.exists('whiteRook')) scene.textures.remove('whiteRook');
   g.clear();
   g.fillStyle(C.whiteShade, 0.6); g.fillEllipse(34, 58, 24, 10);
   g.fillStyle(C.whiteBody); g.fillRoundedRect(16, 48, 36, 10, 4);
@@ -357,14 +354,10 @@ function makeTextures(scene) {
   g.fillStyle(C.whiteBody);
   for (let i = 0; i < 4; i++) g.fillRect(16 + i * 10, 8, 8, 14);
   g.fillStyle(C.whiteTrim); g.fillRect(16, 20, 40, 4);
-  g.fillStyle(0xffffff); g.fillCircle(28, 26, 5); g.fillCircle(40, 26, 5);
-  g.fillStyle(0x333333); g.fillCircle(29, 27, 2); g.fillCircle(41, 27, 2);
-  g.fillStyle(0xffb3e0, 0.6); g.fillCircle(22, 32, 5); g.fillCircle(42, 32, 5);
-  g.lineStyle(2, 0xcc5599, 0.5);
-  g.beginPath(); g.arc(34, 30, 4, 0.3, Math.PI - 0.3, false); g.strokePath();
   g.fillStyle(C.whiteTrim);
   g.fillTriangle(28, 47, 34, 53, 30, 53);
   g.fillTriangle(40, 47, 38, 53, 34, 53);
+  KidAvatar.drawHead(g, 34, 30, 12, avatar);
   g.generateTexture('whiteRook', 68, 68);
 
   // Sun collectible — rays + glow ring
